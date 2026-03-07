@@ -4,18 +4,22 @@
 
 ## 功能特性
 
+- **功能菜单**: `/start` 显示功能菜单，交互更友好
+- **快捷交易对**: BTC/USDT、ETH/USDT 一键选择
 - **多交易所支持**: OKX、Binance（理论上支持所有 ccxt 交易所）
 - **多种时间周期**: 15m、1h、4h
 - **技术指标监控**:
-  - BB 布林带突破
+  - BB 布林带突破（影线触碰布林上轨）
   - VEGAS 触碰检测（K线影线触碰 EMA144/EMA169）
 - **智能去重**: 基于 K 线时间戳，避免重复触发
 - **币种验证**: 自动验证交易对是否支持，避免输入错误
+- **命令自动补全**: 输入 `/` 自动显示命令列表
 - **多语言支持**: 中文/英文切换，自动检测语言
 - **VIP 会员系统**:
   - 普通用户：1 个监控指标
   - VIP 用户：5 个监控指标
   - 前 50 名注册用户免费赠送 14 天 VIP
+- **管理员通知**: 充值申请自动通知管理员，带批准/拒绝按钮
 - **异步架构**: 全链路 asyncio，单核性能最大化
 - **进程解耦**: Bot/Engine/Notifier/VIPChecker 四进程独立运行
 
@@ -24,10 +28,10 @@
 ### 1. 安装依赖
 
 ```bash
-cd cryptosentinel
+cd tg_vps
 python3 -m venv venv
 source venv/bin/activate
-pip install aiosqlite ccxt pandas numpy python-telegram-bot
+pip install -r requirements.txt
 ```
 
 ### 2. 配置环境变量
@@ -37,9 +41,11 @@ cp .env.example .env
 nano .env
 ```
 
-填入你的 Telegram Bot Token：
+填入配置：
 ```
 TELEGRAM_BOT_TOKEN=your_bot_token_here
+ADMIN_UID=your_telegram_uid
+DEPOSIT_ADDRESS=your_trc20_wallet_address
 ```
 
 ### 3. 初始化数据库
@@ -51,19 +57,10 @@ python3 -c "import asyncio; from db_manager import init_db; asyncio.run(init_db(
 ### 4. 启动服务
 
 ```bash
-# 加载环境变量
-export $(cat .env | xargs)
-
-# 启动 Bot
-pm2 start bot.py --name cryptosentinel-bot --interpreter python3
-
-# 启动行情引擎
-pm2 start run_engine_loop.py --name cryptosentinel-engine --interpreter python3
-
-# 启动通知器
-pm2 start notifier.py --name cryptosentinel-notifier --interpreter python3
-
-# 保存进程
+pm2 start run_bot.sh --name tg-bot
+pm2 start run_engine.sh --name tg-engine
+pm2 start run_notifier.sh --name tg-notifier
+pm2 start run_vip.sh --name tg-vip
 pm2 save
 ```
 
@@ -73,15 +70,15 @@ pm2 save
 
 | 命令 | 说明 |
 |------|------|
-| `/start` | 添加新的监控配置 |
+| `/start` | 显示功能菜单 |
 | `/list` | 查看当前监控列表 |
 | `/delete [编号]` | 删除指定监控 |
 | `/vip` | 查看 VIP 说明和充值 |
 | `/deposit [交易哈希]` | 提交充值申请 |
-| `/mystatus` | 查看我的 VIP 状态 |
+| `/mystatus` | 查看我的 VIP 状态和监控列表 |
 | `/myid` | 查看我的用户 ID |
+| `/language` | 切换语言 |
 | `/help` | 查看帮助 |
-| `/cancel` | 取消当前操作 |
 
 ### 管理员命令
 
@@ -99,21 +96,24 @@ pm2 save
 ## 项目结构
 
 ```
-cryptosentinel/
+tg_vps/
 ├── bot.py              # Telegram Bot 前端
 ├── db_manager.py       # 数据库管理
 ├── market_engine.py    # 行情数据生产
 ├── notifier.py         # 信号监控与推送
 ├── vip_checker.py      # VIP 到期检测
 ├── run_engine_loop.py  # 行情引擎循环脚本
-├── cryptosentinel.db   # SQLite 数据库
-├── cryptosentinel_cache.json  # 行情缓存
+├── i18n.py             # 国际化工具
+├── locales/            # 语言包
+│   ├── zh.py           # 中文
+│   └── en.py           # 英文
+├── alphapulse.db       # SQLite 数据库
+├── .env                # 环境变量配置
 ├── .env.example        # 环境变量示例
-├── .AI_CONTEXT.md      # AI 上下文
-└── docs/
-    ├── ARCHITECTURE.md      # 架构文档
-    ├── DEPLOY_GUIDE.md      # 部署指南
-    └── DEVELOPER_MANUAL.md  # 开发手册
+└── docs/               # 文档
+    ├── ARCHITECTURE.md
+    ├── DEPLOY_GUIDE.md
+    └── DEVELOPER_MANUAL.md
 ```
 
 ## 技术栈

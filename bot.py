@@ -121,23 +121,23 @@ async def get_lang(update: Update) -> str:
     return detect_language(lang_code)
 
 
-async def safe_reply(update: Update, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
+async def safe_reply(update: Update, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None, parse_mode: Optional[str] = None) -> None:
     """
     安全发送消息，自动处理 update 来源
     """
     if update.message:
-        await update.message.reply_text(text, reply_markup=reply_markup)
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
     elif update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 
-async def safe_edit(update: Update, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
+async def safe_edit(update: Update, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None, parse_mode: Optional[str] = None) -> None:
     """
     安全编辑消息
     """
     if update.callback_query:
         try:
-            await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+            await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
         except Exception:
             pass
 
@@ -155,9 +155,58 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         pass
 
 
+async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    显示主菜单
+    """
+    lang = await get_lang(update) if update.effective_user else "zh"
+    
+    keyboard = [
+        [
+            InlineKeyboardButton(get_button_text("btn_add_monitor", lang), callback_data="menu_add"),
+            InlineKeyboardButton(get_button_text("btn_my_monitors", lang), callback_data="menu_list"),
+        ],
+        [
+            InlineKeyboardButton(get_button_text("btn_vip_info", lang), callback_data="menu_vip"),
+            InlineKeyboardButton(get_button_text("btn_my_status", lang), callback_data="menu_status"),
+        ],
+        [
+            InlineKeyboardButton(get_button_text("btn_my_uid", lang), callback_data="menu_myid"),
+            InlineKeyboardButton(get_button_text("btn_contact", lang), callback_data="menu_contact"),
+        ],
+        [
+            InlineKeyboardButton(get_button_text("btn_language", lang), callback_data="menu_language"),
+            InlineKeyboardButton(get_button_text("btn_help", lang), callback_data="menu_help"),
+        ],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await safe_reply(update, get_message("main_menu", lang), reply_markup=reply_markup)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    /start 命令入口，检查门票并引导进入状态机
+    /start 命令入口，显示功能菜单
+    """
+    try:
+        if not update.effective_user:
+            return ConversationHandler.END
+        
+        uid = update.effective_user.id
+        await add_user(uid)
+        await try_give_free_vip(uid)
+        
+        await show_main_menu(update, context)
+        return ConversationHandler.END
+
+    except Exception as e:
+        logger.error(f"start 命令异常: {e}")
+        return ConversationHandler.END
+
+
+async def add_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    开始添加监控流程
     """
     try:
         if not update.effective_user:
@@ -165,9 +214,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         
         uid = update.effective_user.id
         lang = await get_lang(update)
-        
-        await add_user(uid)
-        await try_give_free_vip(uid)
         
         max_subs = await get_max_subscriptions(uid)
         sub_count = await get_user_sub_count(uid)
@@ -196,8 +242,357 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return EXCHANGE
         
     except Exception as e:
-        logger.error(f"start 命令异常: {e}")
+        logger.error(f"add_monitor 异常: {e}")
         return ConversationHandler.END
+
+
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    """
+    处理菜单按钮回调
+    """
+    query = update.callback_query
+    if not query:
+        return
+    
+    lang = await get_lang(update)
+    uid = update.effective_user.id
+    
+    if data == "menu_add":
+        max_subs = await get_max_subscriptions(uid)
+        sub_count = await get_user_sub_count(uid)
+        
+        if sub_count >= max_subs:
+            await query.edit_message_text(
+                get_message("max_subs_reached", lang, max=max_subs),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")
+                ]])
+            )
+            return
+        
+        context.user_data["add_flow"] = {"step": "exchange"}
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("Binance", callback_data="add_Binance"),
+                InlineKeyboardButton("OKX", callback_data="add_OKX"),
+            ],
+            [InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]
+        ]
+        await query.edit_message_text(
+            get_message("welcome", lang),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    elif data == "menu_list":
+        subs = await get_user_subs(uid)
+        
+        if not subs:
+            text = "📭 您当前没有任何监控任务\n\n发送 /start 添加新监控"
+        else:
+            text = "📋 您的监控任务列表：\n\n"
+            for sub in subs:
+                status = "✅" if sub["is_active"] else "❌"
+                indicator_name = "BB 布林带" if sub["indicator"] == "BB" else "VEGAS 通道"
+                text += (
+                    f"{status} #{sub['sub_id']} {sub['exchange']} {sub['symbol']}\n"
+                    f"   周期: {sub['timeframe']} | 指标: {indicator_name}\n\n"
+                )
+            text += "💡 使用 /delete [编号] 删除任务"
+        
+        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data == "menu_vip":
+        user_info = await get_user_info(uid)
+        vip_price = await get_vip_price()
+        vip_duration = await get_vip_duration()
+        deposit_address = await get_deposit_address()
+        
+        is_vip = user_info and user_info.get("is_vip")
+        vip_expire = user_info.get("vip_expire_at") if user_info else None
+        
+        if is_vip and vip_expire:
+            expire_date = datetime.fromisoformat(vip_expire).strftime("%Y-%m-%d")
+            status_text = get_message("vip_status_vip", lang, expire_date=expire_date)
+        else:
+            status_text = get_message("vip_status_normal", lang)
+        
+        text = (
+            f"{get_message('vip_title', lang)}\n\n"
+            f"📋 您的状态：\n{status_text}\n\n"
+            f"{get_message('vip_benefits', lang, duration=vip_duration)}\n\n"
+            f"{get_message('vip_price', lang, price=vip_price)}\n\n"
+            f"{get_message('vip_deposit_address', lang, address=deposit_address)}\n\n"
+            f"{get_message('vip_deposit_hint', lang)}"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton(get_button_text("btn_submit_deposit", lang), callback_data="deposit_submit")],
+            [InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    
+    elif data == "menu_status":
+        user_info = await get_user_info(uid)
+        
+        if not user_info:
+            await query.edit_message_text(
+                get_message("error_user_not_found", lang),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")
+                ]])
+            )
+            return
+        
+        is_vip = user_info.get("is_vip")
+        vip_expire = user_info.get("vip_expire_at")
+        created_at = user_info.get("created_at")
+        
+        sub_count = await get_user_sub_count(uid)
+        max_subs = await get_max_subscriptions(uid)
+        subs = await get_user_subs(uid)
+        
+        if is_vip and vip_expire:
+            expire_date = datetime.fromisoformat(vip_expire)
+            days_left = (expire_date - datetime.now()).days
+            status_text = get_message("mystatus_vip", lang,
+                expire_date=expire_date.strftime('%Y-%m-%d'),
+                days_left=days_left
+            )
+        else:
+            status_text = get_message("mystatus_normal", lang)
+        
+        register_date = datetime.fromisoformat(created_at).strftime("%Y-%m-%d") if created_at else "未知"
+        
+        text = (
+            f"{get_message('mystatus_title', lang)}\n\n"
+            f"会员等级：\n{status_text}\n\n"
+            f"{get_message('mystatus_quota', lang, current=sub_count, max=max_subs)}\n"
+            f"{get_message('mystatus_register_date', lang, date=register_date)}\n\n"
+        )
+        
+        if subs:
+            text += f"{get_message('mystatus_monitors_title', lang)}\n"
+            for sub in subs:
+                indicator_name = "BB" if sub["indicator"] == "BB" else "VEGAS"
+                text += f"• {sub['exchange']} {sub['symbol']} ({sub['timeframe']}) - {indicator_name}\n"
+        else:
+            text += f"\n{get_message('mystatus_no_monitors', lang)}"
+        
+        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data == "menu_myid":
+        username = update.effective_user.username or ("未设置" if lang == "zh" else "Not set")
+        text = get_message("myid", lang, uid=uid, username=username)
+        
+        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data == "menu_contact":
+        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]]
+        await query.edit_message_text(
+            get_message("contact_developer", lang),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    elif data == "menu_language":
+        keyboard = [
+            [InlineKeyboardButton(get_button_text("btn_lang_zh", lang), callback_data="lang_zh")],
+            [InlineKeyboardButton(get_button_text("btn_lang_en", lang), callback_data="lang_en")],
+            [InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]
+        ]
+        await query.edit_message_text(
+            get_message("language_select", lang),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    elif data == "menu_help":
+        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]]
+        await query.edit_message_text(
+            get_message("help", lang),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    elif data == "menu_back":
+        await show_main_menu(update, context)
+
+
+async def add_flow_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    """
+    处理添加监控流程的回调
+    """
+    query = update.callback_query
+    if not query:
+        return
+    
+    lang = await get_lang(update)
+    uid = update.effective_user.id
+    
+    add_flow = context.user_data.get("add_flow", {})
+    
+    if data.startswith("add_Binance") or data.startswith("add_OKX"):
+        exchange = data.replace("add_", "")
+        context.user_data["add_flow"] = {"step": "symbol", "exchange": exchange}
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("BTC/USDT", callback_data="add_symbol_BTC/USDT"),
+                InlineKeyboardButton("ETH/USDT", callback_data="add_symbol_ETH/USDT"),
+            ],
+            [InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_add")]
+        ]
+        
+        await query.edit_message_text(
+            get_message("exchange_selected", lang, exchange=exchange),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    elif data.startswith("add_symbol_"):
+        symbol = data.replace("add_symbol_", "")
+        context.user_data["add_flow"]["symbol"] = symbol
+        context.user_data["add_flow"]["step"] = "timeframe"
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("15m", callback_data="add_timeframe_15m"),
+                InlineKeyboardButton("1h", callback_data="add_timeframe_1h"),
+                InlineKeyboardButton("4h", callback_data="add_timeframe_4h"),
+            ]
+        ]
+        
+        await query.edit_message_text(
+            get_message("symbol_selected", lang, symbol=symbol),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    elif data.startswith("add_timeframe_"):
+        timeframe = data.replace("add_timeframe_", "")
+        context.user_data["add_flow"]["step"] = "indicator"
+        context.user_data["add_flow"]["timeframe"] = timeframe
+        
+        exchange = context.user_data["add_flow"].get("exchange", "")
+        symbol = context.user_data["add_flow"].get("symbol", "")
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("BB 布林带", callback_data="add_BB"),
+                InlineKeyboardButton("VEGAS 通道", callback_data="add_VEGAS"),
+            ],
+            [InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_add")]
+        ]
+        
+        text = (
+            f"✅ 交易对: {symbol}\n"
+            f"✅ 时间周期: {timeframe}\n\n请选择技术指标："
+        )
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data in ["add_BB", "add_VEGAS"]:
+        indicator = data.replace("add_", "")
+        context.user_data["add_flow"]["step"] = "confirm"
+        context.user_data["add_flow"]["indicator"] = indicator
+        
+        exchange = context.user_data["add_flow"].get("exchange", "")
+        symbol = context.user_data["add_flow"].get("symbol", "")
+        timeframe = context.user_data["add_flow"].get("timeframe", "")
+        
+        indicator_name = "BB 布林带" if indicator == "BB" else "VEGAS 通道"
+        
+        text = (
+            f"📋 确认您的监控配置：\n\n"
+            f"• 交易所: {exchange}\n"
+            f"• 交易对: {symbol}\n"
+            f"• 时间周期: {timeframe}\n"
+            f"• 技术指标: {indicator_name}\n\n"
+            f"请确认是否保存？"
+        )
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ 确认", callback_data="add_confirm"),
+                InlineKeyboardButton("❌ 取消", callback_data="add_cancel"),
+            ]
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data == "add_confirm":
+        exchange = context.user_data["add_flow"].get("exchange")
+        symbol = context.user_data["add_flow"].get("symbol")
+        timeframe = context.user_data["add_flow"].get("timeframe")
+        indicator = context.user_data["add_flow"].get("indicator")
+        
+        if not all([exchange, symbol, timeframe, indicator]):
+            await query.edit_message_text(
+                "❌ 数据不完整，请重新开始",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_add")
+                ]])
+            )
+            context.user_data.pop("add_flow", None)
+            return
+        
+        if indicator == "BB":
+            params = {"period": 20, "std_dev": 2}
+            indicator_name = "BB 布林带"
+        else:
+            params = {"ema_fast": 144, "ema_slow": 169}
+            indicator_name = "VEGAS 通道"
+        
+        try:
+            sub_id = await add_subscription(
+                uid=uid,
+                exchange=exchange,
+                symbol=symbol,
+                timeframe=timeframe,
+                indicator=indicator,
+                params=params
+            )
+            
+            current_price = None
+            try:
+                import ccxt.async_support as ccxt
+                exchange_inst = getattr(ccxt, exchange.lower())({"enableRateLimit": True})
+                ticker = await exchange_inst.fetch_ticker(symbol)
+                await exchange_inst.close()
+                current_price = ticker.get("last") or ticker.get("close")
+            except Exception as e:
+                logger.warning(f"获取价格失败: {e}")
+            
+            if current_price:
+                text = get_message("confirm_saved_with_price", lang,
+                    price=f"{current_price:.6f}".rstrip('0').rstrip('.'),
+                    exchange=exchange,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    indicator=indicator_name
+                )
+            else:
+                text = get_message("confirm_saved_no_price", lang,
+                    exchange=exchange,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    indicator=indicator_name
+                )
+            
+            keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            
+        except Exception as e:
+            logger.error(f"保存订阅失败: {e}")
+            await query.edit_message_text(
+                "❌ 保存失败，请重试",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_add")
+                ]])
+            )
+        
+        context.user_data.pop("add_flow", None)
+    
+    elif data == "add_cancel":
+        context.user_data.pop("add_flow", None)
+        await show_main_menu(update, context)
 
 
 async def exchange_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -395,19 +790,22 @@ async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return ConversationHandler.END
         
         uid = update.effective_user.id
+        lang = await get_lang(update)
         exchange = context.user_data.get("exchange")
         symbol = context.user_data.get("symbol")
         timeframe = context.user_data.get("timeframe")
         indicator = context.user_data.get("indicator")
         
         if not all([exchange, symbol, timeframe, indicator]):
-            await safe_edit(update, "❌ 数据不完整，请重新开始 /start")
+            await safe_edit(update, get_message("data_incomplete", lang))
             return ConversationHandler.END
         
         if indicator == "BB":
             params = {"period": 20, "std_dev": 2}
+            indicator_name = "BB 布林带"
         else:
             params = {"ema_fast": 144, "ema_slow": 169}
+            indicator_name = "VEGAS 通道"
         
         try:
             sub_id = await add_subscription(
@@ -419,18 +817,40 @@ async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 params=params
             )
             
-            await safe_edit(
-                update,
-                f"✅ 配置已保存！\n\n"
-                f"Sub ID: {sub_id}\n"
-                f"交易所: {exchange}\n"
-                f"交易对: {symbol}\n"
-                f"周期: {timeframe}\n"
-                f"指标: {indicator}"
-            )
+            current_price = None
+            try:
+                import ccxt.async_support as ccxt
+                exchange_inst = getattr(ccxt, exchange.lower())({"enableRateLimit": True})
+                ticker = await exchange_inst.fetch_ticker(symbol)
+                await exchange_inst.close()
+                current_price = ticker.get("last") or ticker.get("close")
+            except Exception as e:
+                logger.warning(f"获取价格失败: {e}")
+            
+            if current_price:
+                await safe_edit(
+                    update,
+                    get_message("confirm_saved_with_price", lang,
+                        price=f"{current_price:.6f}".rstrip('0').rstrip('.'),
+                        exchange=exchange,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        indicator=indicator_name
+                    )
+                )
+            else:
+                await safe_edit(
+                    update,
+                    get_message("confirm_saved_no_price", lang,
+                        exchange=exchange,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        indicator=indicator_name
+                    )
+                )
         except Exception as db_error:
             logger.error(f"保存订阅失败: {db_error}")
-            await safe_edit(update, "❌ 保存失败，请重试")
+            await safe_edit(update, get_message("save_failed", lang))
         
         return ConversationHandler.END
         
@@ -576,7 +996,7 @@ async def vip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await safe_reply(update, text, reply_markup)
+    await safe_reply(update, text, reply_markup, parse_mode="HTML")
 
 
 async def mystatus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -639,6 +1059,7 @@ async def deposit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     lang = await get_lang(update)
     uid = update.effective_user.id
+    username = update.effective_user.username or "未设置"
     
     if not context.args:
         await safe_reply(update, get_message("deposit_missing_hash", lang))
@@ -658,8 +1079,32 @@ async def deposit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     await safe_reply(
         update,
-        get_message("deposit_success", lang, tx_hash=tx_hash[:20], payment_id=payment_id)
+        get_message("deposit_user_notice", lang, tx_hash=tx_hash, payment_id=payment_id)
     )
+    
+    # 通知管理员
+    if ADMIN_UID:
+        try:
+            bot = context.bot
+            admin_text = (
+                f"💰 新的充值申请\n\n"
+                f"📝 申请编号：#{payment_id}\n"
+                f"👤 用户 UID：{uid}\n"
+                f"📱 用户名：@{username}\n"
+                f"🔗 交易哈希：{tx_hash}\n\n"
+                f"请及时处理！"
+            )
+            keyboard = [
+                [InlineKeyboardButton("✅ 批准", callback_data=f"admin_approve_{payment_id}")],
+                [InlineKeyboardButton("❌ 拒绝", callback_data=f"admin_reject_{payment_id}")],
+            ]
+            await bot.send_message(
+                chat_id=ADMIN_UID, 
+                text=admin_text, 
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except Exception as e:
+            logger.error(f"通知管理员失败: {e}")
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -675,6 +1120,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     uid = update.effective_user.id
     data = query.data
     lang = await get_lang(update)
+    
+    if data.startswith("menu_"):
+        await menu_callback(update, context, data)
+        return
+    
+    if data.startswith("add_"):
+        await add_flow_callback(update, context, data)
+        return
     
     if data == "deposit_submit":
         await query.edit_message_text(get_message("deposit_hint", lang))
@@ -725,18 +1178,22 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             [InlineKeyboardButton(get_button_text("btn_submit_deposit", lang), callback_data="deposit_submit")],
             [InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="back_main")]
         ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     
     elif data == "back_vip":
         await vip(update, context)
     
     elif data == "back_main":
-        await query.edit_message_text(get_message("welcome", lang))
+        await show_main_menu(update, context)
     
     elif data.startswith("lang_"):
         new_lang = data.split("_")[-1]
         await set_user_language(uid, new_lang)
-        await query.edit_message_text(get_message("language_changed", new_lang))
+        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", new_lang), callback_data="menu_back")]]
+        await query.edit_message_text(
+            get_message("language_changed", new_lang),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 
 async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1005,6 +1462,71 @@ async def broadcast_message_handler(update: Update, context: ContextTypes.DEFAUL
     )
 
 
+async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    处理文本消息
+    """
+    if not update.message or not update.message.text:
+        return
+    
+    if not update.effective_user:
+        return
+    
+    uid = update.effective_user.id
+    
+    add_flow = context.user_data.get("add_flow", {})
+    
+    if add_flow.get("step") == "symbol":
+        lang = await get_lang(update)
+        symbol = update.message.text.strip().upper()
+        
+        if not symbol or "/" not in symbol or len(symbol) > 20:
+            await update.message.reply_text(get_message("symbol_format_error", lang))
+            return
+        
+        parts = symbol.split("/")
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            await update.message.reply_text(get_message("symbol_format_error", lang))
+            return
+        
+        supported_symbols = await get_supported_symbols()
+        
+        if supported_symbols and symbol not in supported_symbols:
+            popular_symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "DOGE/USDT", 
+                             "ADA/USDT", "AVAX/USDT", "DOT/USDT", "MATIC/USDT", "LINK/USDT"]
+            available = [s for s in popular_symbols if s in supported_symbols][:10]
+            symbols_str = "\n".join(available) if available else "BTC/USDT, ETH/USDT, SOL/USDT"
+            
+            await update.message.reply_text(
+                get_message("symbol_not_supported", lang, symbols=symbols_str)
+            )
+            return
+        
+        context.user_data["add_flow"]["symbol"] = symbol
+        context.user_data["add_flow"]["step"] = "timeframe"
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("15m", callback_data="add_timeframe_15m"),
+                InlineKeyboardButton("1h", callback_data="add_timeframe_1h"),
+                InlineKeyboardButton("4h", callback_data="add_timeframe_4h"),
+            ]
+        ]
+        
+        await update.message.reply_text(
+            get_message("symbol_selected", lang, symbol=symbol),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+    
+    if context.user_data.get('broadcast_mode'):
+        await broadcast_message_handler(update, context)
+        return
+    
+    lang = await get_lang(update)
+    await update.message.reply_text(get_message("help", lang))
+
+
 async def setvip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     /setvip 命令：手动开通 VIP
@@ -1082,7 +1604,7 @@ def main() -> None:
     
     application.add_handler(conv_handler)
     
-    application.add_handler(CallbackQueryHandler(button_callback, pattern="^(deposit_submit|vip_status|open_vip|back_vip|back_main|lang_)"))
+    application.add_handler(CallbackQueryHandler(button_callback, pattern="^(deposit_submit|vip_status|open_vip|back_vip|back_main|lang_|menu_|add_)"))
     application.add_handler(CallbackQueryHandler(admin_button_callback, pattern="^admin_"))
     
     application.add_handler(CommandHandler("list", list_subs))
@@ -1095,7 +1617,7 @@ def main() -> None:
     application.add_handler(CommandHandler("admin", admin_panel))
     application.add_handler(CommandHandler("setvip", setvip))
     
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
     
     async def help_command(update, context):
         lang = await get_lang(update)
@@ -1104,6 +1626,23 @@ def main() -> None:
     application.add_handler(CommandHandler("help", help_command))
     
     application.add_error_handler(error_handler)
+    
+    from telegram import BotCommand
+    
+    async def set_commands(app):
+        commands = [
+            BotCommand("start", "主菜单"),
+            BotCommand("list", "我的监控"),
+            BotCommand("vip", "VIP说明"),
+            BotCommand("mystatus", "我的状态"),
+            BotCommand("myid", "我的UID"),
+            BotCommand("language", "切换语言"),
+            BotCommand("deposit", "提交充值"),
+            BotCommand("help", "帮助"),
+        ]
+        await app.bot.set_my_commands(commands)
+    
+    application.post_init = set_commands
     
     print("🤖 CryptoSentinel Bot 已启动...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)

@@ -114,20 +114,20 @@ def check_bb_signal_change(
     prev_state: Optional[Dict[str, Any]]
 ) -> Optional[bool]:
     """
-    检查 BB 突破状态变化
+    检查 BB 突破状态变化（影线触碰布林上轨）
     
     Returns:
         True: 新触发突破（之前未突破，现在突破）
         False: 突破消失（之前突破，现在未突破）
         None: 状态未变化或数据不足
     """
-    close = market_data.get("close")
+    high = market_data.get("high")
     bbu = market_data.get("BBU_20_2")
     
-    if close is None or bbu is None:
+    if high is None or bbu is None:
         return None
     
-    current_triggered = close > bbu
+    current_triggered = high > bbu
     prev_triggered = prev_state.get("bb_triggered", False) if prev_state else False
     
     if current_triggered and not prev_triggered:
@@ -214,14 +214,16 @@ def check_signal(
             return None
         
         symbol = market_data.get("symbol")
+        high = market_data.get("high")
         close = market_data.get("close")
         bbu = market_data.get("BBU_20_2")
         
-        if close is None or bbu is None:
+        if high is None or bbu is None:
             return None
         
         if change:
-            return f"🚀 BB 突破信号\n{symbol} 收盘价 {close:.2f} 突破布林上轨 {bbu:.2f}"
+            close_str = f"\n收盘价: {close:.2f}" if close else ""
+            return f"🚀 BB 突破信号\n{symbol} 最高价 {high:.2f} 触碰布林上轨 {bbu:.2f}{close_str}"
         return None
     
     elif indicator == "VEGAS":
@@ -272,15 +274,15 @@ def update_signal_state(
     cross_up_169 = None
     cross_down_169 = None
     
-    close = market_data.get("close")
-    bbu = market_data.get("BBU_20_2")
     high = market_data.get("high")
+    bbu = market_data.get("BBU_20_2")
     low = market_data.get("low")
+    close = market_data.get("close")
     ema_144 = market_data.get("EMA_144")
     ema_169 = market_data.get("EMA_169")
     
-    if close is not None and bbu is not None:
-        bb_triggered = close > bbu
+    if high is not None and bbu is not None:
+        bb_triggered = high > bbu
     
     if high is not None and low is not None and close is not None:
         if ema_144 is not None:

@@ -102,7 +102,7 @@ python3 -m venv venv
 source venv/bin/activate
 
 # 安装依赖
-pip install aiosqlite ccxt pandas numpy python-telegram-bot
+pip install -r requirements.txt
 ```
 
 ### 3.3 配置环境变量
@@ -122,25 +122,15 @@ nano .env
 ```bash
 # Telegram Bot Token（从 @BotFather 获取）
 TELEGRAM_BOT_TOKEN=你的Bot_Token
+
+# 管理员 UID（从 @userinfobot 获取）
+ADMIN_UID=你的Telegram_UID
+
+# VIP 充值地址（TRC20）
+DEPOSIT_ADDRESS=你的TRC20钱包地址
 ```
 
-### 3.4 配置管理员 UID
-
-编辑 `db_manager.py` 第 18 行：
-
-```python
-ADMIN_UID = 你的UID  # 从 @userinfobot 获取
-```
-
-### 3.5 配置充值地址
-
-编辑 `db_manager.py` 第 20 行：
-
-```python
-DEPOSIT_ADDRESS = "你的TRC20钱包地址"
-```
-
-### 3.6 初始化数据库
+### 3.4 初始化数据库
 
 ```bash
 cd ~/cryptosentinel
@@ -153,7 +143,7 @@ python3 -c "import asyncio; from db_manager import init_db; asyncio.run(init_db(
 ls -la cryptosentinel.db
 ```
 
-### 3.7 创建启动脚本
+### 3.4 创建启动脚本
 
 创建 `run_bot.sh`：
 

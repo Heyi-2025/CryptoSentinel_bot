@@ -4,6 +4,22 @@ English Language Pack
 """
 
 MESSAGES = {
+    # Main Menu
+    "main_menu": "📈 CryptoSentinel Monitor\n\nPlease select a function:",
+    "btn_add_monitor": "➕ Add Monitor",
+    "btn_my_monitors": "📋 My Monitors",
+    "btn_vip_info": "💎 VIP Info",
+    "btn_my_status": "📊 My Status",
+    "btn_my_uid": "🆔 My UID",
+    "btn_contact": "👨‍💻 Contact Dev",
+    "btn_language": "🌐 Language",
+    "btn_help": "❓ Help",
+    "contact_developer": "👨‍💻 Contact Developer\n\nTelegram: @wxyybw\n\nFeel free to reach out for questions or suggestions!",
+    
+    # Subscription success (with price)
+    "confirm_saved_with_price": "✅ Monitor added successfully!\n\n💰 Current Price: {price} USDT\n\n📋 Details:\n• Exchange: {exchange}\n• Symbol: {symbol}\n• Timeframe: {timeframe}\n• Indicator: {indicator}\n\n💡 Use /list to view all monitors",
+    "confirm_saved_no_price": "✅ Monitor added successfully!\n\n📋 Details:\n• Exchange: {exchange}\n• Symbol: {symbol}\n• Timeframe: {timeframe}\n• Indicator: {indicator}\n\n💡 Use /list to view all monitors",
+    
     # Common
     "welcome": "📈 CryptoSentinel Monitor\n\nPlease select exchange:",
     "help": "📖 Commands:\n\n📊 Monitoring:\n/start - Add monitor\n/list - View monitors\n/delete [id] - Delete monitor\n\n💎 VIP:\n/vip - VIP info & deposit\n/mystatus - My VIP status\n/myid - View my UID\n/language - Change language\n\nOther:\n/cancel - Cancel operation",

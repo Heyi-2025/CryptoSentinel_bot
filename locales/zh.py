@@ -4,6 +4,22 @@
 """
 
 MESSAGES = {
+    # 主菜单
+    "main_menu": "📈 CryptoSentinel 监控系统\n\n请选择功能：",
+    "btn_add_monitor": "➕ 添加监控",
+    "btn_my_monitors": "📋 我的监控",
+    "btn_vip_info": "💎 VIP说明",
+    "btn_my_status": "📊 我的状态",
+    "btn_my_uid": "🆔 我的UID",
+    "btn_contact": "👨‍💻 联系开发者",
+    "btn_language": "🌐 语言",
+    "btn_help": "❓ 帮助",
+    "contact_developer": "👨‍💻 联系开发者\n\nTelegram: @wxyybw\n\n如有问题或建议，欢迎联系！",
+    
+    # 订阅成功（带价格）
+    "confirm_saved_with_price": "✅ 监控添加成功！\n\n💰 当前价格：{price} USDT\n\n📋 订阅详情：\n• 交易所：{exchange}\n• 交易对：{symbol}\n• 周期：{timeframe}\n• 指标：{indicator}\n\n💡 使用 /list 查看所有监控",
+    "confirm_saved_no_price": "✅ 监控添加成功！\n\n📋 订阅详情：\n• 交易所：{exchange}\n• 交易对：{symbol}\n• 周期：{timeframe}\n• 指标：{indicator}\n\n💡 使用 /list 查看所有监控",
+    
     # 通用
     "welcome": "📈 CryptoSentinel 监控系统\n\n请选择交易所：",
     "help": "📖 命令列表：\n\n📊 监控功能：\n/start - 添加监控\n/list - 查看监控列表\n/delete [编号] - 删除监控\n\n💎 VIP功能：\n/vip - VIP说明和充值\n/mystatus - 我的VIP状态\n/myid - 查看我的UID\n/language - 切换语言\n\n其他：\n/cancel - 取消操作",
@@ -65,12 +81,16 @@ MESSAGES = {
     "mystatus_normal": "❌ 普通用户\n配额: 1 个指标",
     "mystatus_quota": "指标配额：{current}/{max}",
     "mystatus_register_date": "注册时间：{date}",
+    "mystatus_monitors_title": "📋 我的监控列表：",
+    "mystatus_no_monitors": "暂无监控任务",
+    "mystatus_monitor_item": "• {exchange} {symbol} ({timeframe}) - {indicator}",
     
     # 充值
     "deposit_hint": "📝 提交充值申请\n\n请发送交易哈希：\n格式：/deposit 交易哈希\n\n示例：\n/deposit abc123def456789...",
     "deposit_missing_hash": "❌ 请提供交易哈希\n\n用法：/deposit 交易哈希\n示例：/deposit abc123def456...",
     "deposit_hash_too_short": "❌ 交易哈希格式错误，请检查后重试",
     "deposit_success": "✅ 充值申请已提交！\n\n交易哈希：{tx_hash}...\n申请编号：#{payment_id}\n\n请等待管理员审核，审核通过后将自动开通 VIP。",
+    "deposit_user_notice": "✅ 充值申请已提交！\n\n📝 申请编号：#{payment_id}\n🔗 交易哈希：{tx_hash}\n\n⏰ 开发者位于 UTC+8 时区，处理可能有延迟。\n🎁 为感谢您的耐心等待，我们将额外赠送 50 天 VIP 时长！\n\n审核通过后将自动开通，请耐心等待。",
     
     # 开通VIP
     "open_vip_title": "💎 开通 VIP",
