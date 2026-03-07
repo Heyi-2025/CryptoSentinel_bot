@@ -214,7 +214,7 @@ async def run_engine(subs_list: List[Dict[str, Any]]) -> None:
         result = await fetch_and_calc(exchange_name, symbol, timeframe)
         
         if result is not None:
-            cache_key = f"{exchange_name}:{symbol}"
+            cache_key = f"{exchange_name}:{symbol}:{timeframe}"
             market_data[cache_key] = result
         else:
             failed_count += 1

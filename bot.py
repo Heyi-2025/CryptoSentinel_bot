@@ -650,6 +650,10 @@ async def deposit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await safe_reply(update, get_message("deposit_hash_too_short", lang))
         return
     
+    if not all(c in '0123456789abcdefABCDEF' for c in tx_hash):
+        await safe_reply(update, "❌ 交易哈希格式错误，请输入正确的 TRC20 交易哈希")
+        return
+    
     payment_id = await create_payment_request(uid, tx_hash)
     
     await safe_reply(
@@ -1017,6 +1021,10 @@ async def setvip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         target_uid = int(context.args[0])
         days = int(context.args[1])
+        
+        if days <= 0 or days > 3650:
+            await safe_reply(update, "❌ 天数必须在 1-3650 之间")
+            return
     except ValueError:
         await safe_reply(update, "❌ 参数格式错误")
         return

@@ -146,17 +146,18 @@ def check_vegas_signal_change(
     
     Returns:
         信号列表，每个元素是一个信号类型：
-        "cross_up_144": K线上穿EMA144
-        "cross_down_144": K线下穿EMA144
+        "cross_up_144": K线上穿EMA144 (收盘价从下向上穿过)
+        "cross_down_144": K线下穿EMA144 (收盘价从上向下穿过)
         "cross_up_169": K线上穿EMA169
         "cross_down_169": K线下穿EMA169
     """
     high = market_data.get("high")
     low = market_data.get("low")
+    close = market_data.get("close")
     ema_144 = market_data.get("EMA_144")
     ema_169 = market_data.get("EMA_169")
     
-    if high is None or low is None or ema_144 is None or ema_169 is None:
+    if high is None or low is None or close is None or ema_144 is None or ema_169 is None:
         return []
     
     signals = []
@@ -166,11 +167,11 @@ def check_vegas_signal_change(
     prev_cross_up_169 = prev_state.get("cross_up_169", False) if prev_state else False
     prev_cross_down_169 = prev_state.get("cross_down_169", False) if prev_state else False
     
-    cross_up_144 = low < ema_144 < high
-    cross_down_144 = low < ema_144 < high
+    cross_up_144 = low < ema_144 < high and close > ema_144
+    cross_down_144 = low < ema_144 < high and close < ema_144
     
-    cross_up_169 = low < ema_169 < high
-    cross_down_169 = low < ema_169 < high
+    cross_up_169 = low < ema_169 < high and close > ema_169
+    cross_down_169 = low < ema_169 < high and close < ema_169
     
     if cross_up_144 and not prev_cross_up_144:
         signals.append("cross_up_144")
@@ -281,13 +282,13 @@ def update_signal_state(
     if close is not None and bbu is not None:
         bb_triggered = close > bbu
     
-    if high is not None and low is not None:
+    if high is not None and low is not None and close is not None:
         if ema_144 is not None:
-            cross_up_144 = low < ema_144 < high
-            cross_down_144 = low < ema_144 < high
+            cross_up_144 = low < ema_144 < high and close > ema_144
+            cross_down_144 = low < ema_144 < high and close < ema_144
         if ema_169 is not None:
-            cross_up_169 = low < ema_169 < high
-            cross_down_169 = low < ema_169 < high
+            cross_up_169 = low < ema_169 < high and close > ema_169
+            cross_down_169 = low < ema_169 < high and close < ema_169
     
     _signal_state[sub_id] = {
         "timestamp": timestamp,

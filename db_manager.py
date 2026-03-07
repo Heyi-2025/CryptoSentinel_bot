@@ -11,9 +11,9 @@ from typing import List, Dict, Any, Optional
 
 DATABASE_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cryptosentinel.db")
 
-ADMIN_UID = 7033823445
+ADMIN_UID = int(os.environ.get("ADMIN_UID", "0"))
 
-DEPOSIT_ADDRESS = "TQ66Jy7fgubE9H3dj981gfqnEfodSBVPfx"
+DEPOSIT_ADDRESS = os.environ.get("DEPOSIT_ADDRESS", "")
 
 VIP_PRICE_USDT = 10
 VIP_DURATION_DAYS = 365
@@ -199,13 +199,13 @@ async def add_subscription(
 
 async def get_active_subs() -> Dict[str, List[Dict[str, Any]]]:
     """
-    查询所有处于 active 状态的订阅记录，按 exchange 和 symbol 归类去重
+    查询所有处于 active 状态的订阅记录，按 exchange:symbol:timeframe 归类去重
     
     Returns:
-        字典，key 为 "exchange:symbol" 格式，value 为订阅配置列表
+        字典，key 为 "exchange:symbol:timeframe" 格式，value 为订阅配置列表
         示例:
         {
-            "OKX:BTC/USDT": [
+            "OKX:BTC/USDT:15m": [
                 {
                     "sub_id": 1,
                     "uid": 123,
@@ -232,7 +232,7 @@ async def get_active_subs() -> Dict[str, List[Dict[str, Any]]]:
     result: Dict[str, List[Dict[str, Any]]] = {}
     
     for row in rows:
-        key = f"{row['exchange']}:{row['symbol']}"
+        key = f"{row['exchange']}:{row['symbol']}:{row['timeframe']}"
         params = json.loads(row['params']) if row['params'] else {}
         
         sub_info = {
