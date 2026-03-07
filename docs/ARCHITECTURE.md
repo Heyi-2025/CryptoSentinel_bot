@@ -219,9 +219,9 @@ vip_checker.py 每小时检查一次
 
 ### 4.1 管理员权限
 
-管理员 UID 硬编码在 `db_manager.py`：
+管理员 UID 通过环境变量配置（`db_manager.py`）：
 ```python
-ADMIN_UID = 7033823445
+ADMIN_UID = int(os.environ.get("ADMIN_UID", "0"))
 ```
 
 ### 4.2 管理员命令
@@ -249,7 +249,7 @@ ADMIN_UID = 7033823445
 | `init_db()` | - | `None` | 初始化数据库，创建表结构 |
 | `add_user(uid: int)` | 用户 ID | `None` | 插入新用户（存在则忽略） |
 | `add_subscription(uid, exchange, symbol, timeframe, indicator, params)` | 订阅配置 | `int` (sub_id) | 插入一条订阅记录 |
-| `get_active_subs()` | - | `Dict[str, List[Dict]]` | 查询所有活跃订阅，按 exchange:symbol 归类 |
+| `get_active_subs()` | - | `Dict[str, List[Dict]]` | 查询所有活跃订阅，按 exchange:symbol:timeframe 归类 |
 | `get_user_sub_count(uid: int)` | 用户 ID | `int` | 查询用户订阅数量（用于门票校验） |
 | `get_user_subs(uid: int)` | 用户 ID | `List[Dict]` | 查询指定用户的所有订阅记录 |
 | `delete_subscription(sub_id: int, uid: int)` | sub_id, 用户ID | `bool` | 删除指定用户的订阅记录 |
@@ -348,7 +348,7 @@ EXCHANGE, SYMBOL, TIMEFRAME, INDICATOR, CONFIRM = range(5)
 
 ```json
 {
-  "OKX:BTC/USDT": {
+  "OKX:BTC/USDT:15m": {
     "exchange": "OKX",
     "symbol": "BTC/USDT",
     "timeframe": "15m",
@@ -364,7 +364,23 @@ EXCHANGE, SYMBOL, TIMEFRAME, INDICATOR, CONFIRM = range(5)
     "EMA_144": 50950.0,
     "EMA_169": 50880.0
   },
-  "Binance:ETH/USDT": {
+  "OKX:BTC/USDT:1h": {
+    "exchange": "OKX",
+    "symbol": "BTC/USDT",
+    "timeframe": "1h",
+    "timestamp": 1709276400000,
+    "open": 51000.0,
+    "high": 51500.0,
+    "low": 50800.0,
+    "close": 51200.0,
+    "volume": 2345.67,
+    "BBL_20_2": 50500.0,
+    "BBM_20_2": 50800.0,
+    "BBU_20_2": 51100.0,
+    "EMA_144": 50700.0,
+    "EMA_169": 50600.0
+  },
+  "Binance:ETH/USDT:1h": {
     "exchange": "Binance",
     "symbol": "ETH/USDT",
     "timeframe": "1h",
@@ -387,7 +403,7 @@ EXCHANGE, SYMBOL, TIMEFRAME, INDICATOR, CONFIRM = range(5)
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| Key | String | `exchange:symbol` 格式 |
+| Key | String | `exchange:symbol:timeframe` 格式（v1.6 更新） |
 | `exchange` | String | 交易所名称 |
 | `symbol` | String | 交易对 |
 | `timeframe` | String | K 线周期 |
@@ -489,12 +505,16 @@ async def write_cache_atomic(data):
 | 变量名 | 说明 | 示例 |
 |--------|------|------|
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot Token | `1234567890:ABCdef...` |
+| `ADMIN_UID` | 管理员 Telegram UID | `123456789` |
+| `DEPOSIT_ADDRESS` | VIP 充值地址 (TRC20) | `TQ66Jy...` |
 
 ### 6.2 配置方式
 
 **方式一：环境变量**
 ```bash
 export TELEGRAM_BOT_TOKEN="your_token_here"
+export ADMIN_UID="your_telegram_uid"
+export DEPOSIT_ADDRESS="your_trc20_wallet_address"
 ```
 
 **方式二：.env 文件**
@@ -504,6 +524,8 @@ cp .env.example .env
 
 # 编辑 .env 文件
 TELEGRAM_BOT_TOKEN=your_token_here
+ADMIN_UID=your_telegram_uid
+DEPOSIT_ADDRESS=your_trc20_wallet_address
 ```
 
 ---
@@ -590,14 +612,14 @@ TELEGRAM_BOT_TOKEN=your_token_here
 **改进方案**:
 - 检测 K 线影线是否触碰 EMA144 或 EMA169
 - 区分上穿和下穿信号
-- 使用 `high` 和 `low` 判断是否穿过 EMA 线
+- 使用 `high`、`low` 和 `close` 判断是否穿过 EMA 线
 - 同一根 K 线内不重复触发
 
 **信号类型**:
-- ⬆️ 上穿 EMA144：`low < EMA144 < high`
-- ⬇️ 下穿 EMA144：`low < EMA144 < high`
-- ⬆️ 上穿 EMA169：`low < EMA169 < high`
-- ⬇️ 下穿 EMA169：`low < EMA169 < high`
+- ⬆️ 上穿 EMA144：`low < EMA144 < high` 且 `close > EMA144`
+- ⬇️ 下穿 EMA144：`low < EMA144 < high` 且 `close < EMA144`
+- ⬆️ 上穿 EMA169：`low < EMA169 < high` 且 `close > EMA169`
+- ⬇️ 下穿 EMA169：`low < EMA169 < high` 且 `close < EMA169`
 
 ### 7.9 币种白名单验证 (v1.5 已实现)
 
@@ -609,7 +631,43 @@ TELEGRAM_BOT_TOKEN=your_token_here
 - 用户输入不支持的币种时，显示热门币种列表
 - 只验证 OKX，Binance 暂不验证
 
+### 7.10 缓存 Key 时间周期问题 (v1.6 已修复)
+
+**问题描述**: 缓存 key 格式为 `exchange:symbol`，不包含 timeframe。当同一币种有多个时间周期订阅时，后抓取的数据会覆盖前一个，导致用户收到错误周期的数据。
+
+**修复方案**:
+- 缓存 key 改为 `exchange:symbol:timeframe` 格式
+- `get_active_subs()` 分组 key 同步更新
+- 支持同一币种多个时间周期独立存储
+
+### 7.11 VEGAS 信号逻辑错误 (v1.6 已修复)
+
+**问题描述**: 上穿和下穿信号使用相同条件 `low < EMA < high`，无法区分方向，导致同时触发两个信号。
+
+**修复方案**:
+- 上穿信号：`low < EMA < high` 且 `close > EMA`（收盘价在 EMA 上方）
+- 下穿信号：`low < EMA < high` 且 `close < EMA`（收盘价在 EMA 下方）
+
+### 7.12 敏感信息硬编码问题 (v1.6 已修复)
+
+**问题描述**: 管理员 UID 和充值地址硬编码在源码中，存在安全风险且不便于配置。
+
+**修复方案**:
+- `ADMIN_UID` 从环境变量读取
+- `DEPOSIT_ADDRESS` 从环境变量读取
+- 新增 `.env.example` 配置模板
+
+### 7.13 输入验证增强 (v1.6 已实现)
+
+**VIP 天数验证**:
+- 限制天数范围：1-3650 天
+- 防止负数或超大值
+
+**交易哈希验证**:
+- 检查是否为有效十六进制字符
+- 防止无效格式的交易哈希提交
+
 ---
 
-*文档版本：v1.5*  
+*文档版本：v1.6*  
 *最后更新：2025-03-07*
