@@ -44,6 +44,24 @@ def calculate_bbands(series: pd.Series, length: int = 20, std: float = 2) -> dic
     return {"upper": upper, "middle": middle, "lower": lower}
 
 
+def calculate_sma(series: pd.Series, length: int) -> pd.Series:
+    """
+    计算简单移动平均线 (SMA)
+    """
+    return series.rolling(window=length).mean()
+
+
+def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> pd.Series:
+    """
+    计算真实波幅 (ATR)
+    """
+    tr1 = high - low
+    tr2 = abs(high - close.shift(1))
+    tr3 = abs(low - close.shift(1))
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    return tr.rolling(window=length).mean()
+
+
 async def fetch_and_calc(
     exchange_name: str,
     symbol: str,
@@ -97,6 +115,14 @@ async def fetch_and_calc(
         df["EMA_144"] = calculate_ema(close_series, length=144)
         df["EMA_169"] = calculate_ema(close_series, length=169)
         
+        df["MA_20"] = calculate_sma(close_series, length=20)
+        df["EMA_20"] = calculate_ema(close_series, length=20)
+        df["MA_60"] = calculate_sma(close_series, length=60)
+        df["EMA_60"] = calculate_ema(close_series, length=60)
+        df["MA_120"] = calculate_sma(close_series, length=120)
+        df["EMA_120"] = calculate_ema(close_series, length=120)
+        df["ATR_14"] = calculate_atr(df["high"], df["low"], df["close"], length=14)
+        
         latest = df.iloc[-1]
         
         result = {
@@ -114,6 +140,13 @@ async def fetch_and_calc(
             "BBU_20_2": float(latest["BBU_20_2"]) if pd.notna(latest.get("BBU_20_2")) else None,
             "EMA_144": float(latest["EMA_144"]) if pd.notna(latest.get("EMA_144")) else None,
             "EMA_169": float(latest["EMA_169"]) if pd.notna(latest.get("EMA_169")) else None,
+            "MA_20": float(latest["MA_20"]) if pd.notna(latest.get("MA_20")) else None,
+            "EMA_20": float(latest["EMA_20"]) if pd.notna(latest.get("EMA_20")) else None,
+            "MA_60": float(latest["MA_60"]) if pd.notna(latest.get("MA_60")) else None,
+            "EMA_60": float(latest["EMA_60"]) if pd.notna(latest.get("EMA_60")) else None,
+            "MA_120": float(latest["MA_120"]) if pd.notna(latest.get("MA_120")) else None,
+            "EMA_120": float(latest["EMA_120"]) if pd.notna(latest.get("EMA_120")) else None,
+            "ATR_14": float(latest["ATR_14"]) if pd.notna(latest.get("ATR_14")) else None,
         }
         
         print(f"[{exchange_name}] {symbol} {timeframe} 指标计算完成")

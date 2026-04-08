@@ -196,7 +196,7 @@ async def timeframe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.answer()
         timeframe = query.data
         context.user_data["timeframe"] = timeframe
-        keyboard = [[InlineKeyboardButton(get_message("indicator_bb", await get_lang(update)), callback_data="BB"), InlineKeyboardButton(get_message("indicator_vegas", await get_lang(update)), callback_data="VEGAS")]]
+        keyboard = [[InlineKeyboardButton(get_message("indicator_bb", await get_lang(update)), callback_data="BB"), InlineKeyboardButton(get_message("indicator_vegas", await get_lang(update)), callback_data="VEGAS"), InlineKeyboardButton(get_message("indicator_ma_density", await get_lang(update)), callback_data="MA_DENSITY")]]
         symbol = context.user_data.get("symbol", "")
         await safe_edit(update, get_message("timeframe_selected", await get_lang(update), symbol=symbol, timeframe=timeframe), reply_markup=InlineKeyboardMarkup(keyboard))
         return INDICATOR
@@ -426,7 +426,7 @@ def main() -> None:
             EXCHANGE: [CallbackQueryHandler(exchange_callback, pattern="^(Binance|OKX)$")],
             SYMBOL: [MessageHandler(filters.TEXT & ~filters.COMMAND, symbol_received)],
             TIMEFRAME: [CallbackQueryHandler(timeframe_callback, pattern="^(15m|1h|4h)$")],
-            INDICATOR: [CallbackQueryHandler(indicator_callback, pattern="^(BB|VEGAS)$")],
+            INDICATOR: [CallbackQueryHandler(indicator_callback, pattern="^(BB|VEGAS|MA_DENSITY)$")],
             CONFIRM: [CallbackQueryHandler(confirm_callback, pattern="^(confirm|cancel)$")],
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],

@@ -39,6 +39,7 @@ MESSAGES = {
     # Indicator
     "indicator_bb": "BB Bollinger Bands",
     "indicator_vegas": "VEGAS Tunnel",
+    "indicator_ma_density": "MA Density",
     "indicator_selected": "📋 Confirm your monitor settings:\n\n• Exchange: {exchange}\n• Symbol: {symbol}\n• Timeframe: {timeframe}\n• Indicator: {indicator}\n\nSave this configuration?",
     
     # Confirm

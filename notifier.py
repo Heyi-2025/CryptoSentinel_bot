@@ -188,6 +188,67 @@ def check_vegas_signal_change(
     return signals
 
 
+def check_ma_density_signal(
+    market_data: Dict[str, Any], 
+    prev_state: Optional[Dict[str, Any]]
+) -> Optional[str]:
+    """
+    检查均线密集信号
+    
+    密集级别:
+        0 = 无密集
+        1 = 核心密集 (MA20/EMA20/MA60/EMA60 收敛)
+        2 = 全员密集 (上述4条 + MA120/EMA120 全部收敛)
+    
+    只在升级时触发通知:
+        0→1: 核心密集 🟠
+        0→2 或 1→2: 全员密集 🟢
+    
+    Returns:
+        信号消息文本，无升级信号返回 None
+    """
+    ma_20 = market_data.get("MA_20")
+    ema_20 = market_data.get("EMA_20")
+    ma_60 = market_data.get("MA_60")
+    ema_60 = market_data.get("EMA_60")
+    ma_120 = market_data.get("MA_120")
+    ema_120 = market_data.get("EMA_120")
+    atr = market_data.get("ATR_14")
+    
+    if any(v is None for v in [ma_20, ema_20, ma_60, ema_60, atr]):
+        return None
+    
+    core_top = max(ma_20, ema_20, ma_60, ema_60)
+    core_bot = min(ma_20, ema_20, ma_60, ema_60)
+    core_width = core_top - core_bot
+    
+    is_core_dense = core_width < (atr * 0.7)
+    
+    is_all_dense = False
+    if is_core_dense and ma_120 is not None and ema_120 is not None:
+        core_center = (core_top + core_bot) / 2
+        dist_120_max = max(abs(ma_120 - core_center), abs(ema_120 - core_center))
+        is_all_dense = dist_120_max < (atr * 0.8)
+    
+    current_level = 0
+    if is_all_dense:
+        current_level = 2
+    elif is_core_dense:
+        current_level = 1
+    
+    prev_level = prev_state.get("ma_density_level", 0) if prev_state else 0
+    
+    symbol = market_data.get("symbol", "")
+    
+    if current_level > prev_level:
+        if current_level == 2:
+            return f"🟢 均线全员密集\n{symbol} 六条均线共振，大行情可能来临\n核心带宽: {core_width:.4f} / ATR: {atr:.4f}"
+        elif current_level == 1:
+            return f"🟠 均线核心密集\n{symbol} 短期均线组开始收敛，蓄势待发\n带宽: {core_width:.4f} / ATR: {atr:.4f}"
+    
+    return None
+
+
 def check_signal(
     market_data: Dict[str, Any], 
     sub: Dict[str, Any],
@@ -255,6 +316,9 @@ def check_signal(
         
         return None
     
+    elif indicator == "MA_DENSITY":
+        return check_ma_density_signal(market_data, prev_state)
+    
     return None
 
 
@@ -273,6 +337,7 @@ def update_signal_state(
     cross_down_144 = None
     cross_up_169 = None
     cross_down_169 = None
+    ma_density_level = 0
     
     high = market_data.get("high")
     bbu = market_data.get("BBU_20_2")
@@ -292,13 +357,40 @@ def update_signal_state(
             cross_up_169 = low < ema_169 < high and close > ema_169
             cross_down_169 = low < ema_169 < high and close < ema_169
     
+    ma_20 = market_data.get("MA_20")
+    ema_20 = market_data.get("EMA_20")
+    ma_60 = market_data.get("MA_60")
+    ema_60 = market_data.get("EMA_60")
+    ma_120 = market_data.get("MA_120")
+    ema_120 = market_data.get("EMA_120")
+    atr = market_data.get("ATR_14")
+    
+    if all(v is not None for v in [ma_20, ema_20, ma_60, ema_60, atr]):
+        core_top = max(ma_20, ema_20, ma_60, ema_60)
+        core_bot = min(ma_20, ema_20, ma_60, ema_60)
+        core_width = core_top - core_bot
+        
+        is_core_dense = core_width < (atr * 0.7)
+        is_all_dense = False
+        
+        if is_core_dense and ma_120 is not None and ema_120 is not None:
+            core_center = (core_top + core_bot) / 2
+            dist_120_max = max(abs(ma_120 - core_center), abs(ema_120 - core_center))
+            is_all_dense = dist_120_max < (atr * 0.8)
+        
+        if is_all_dense:
+            ma_density_level = 2
+        elif is_core_dense:
+            ma_density_level = 1
+    
     _signal_state[sub_id] = {
         "timestamp": timestamp,
         "bb_triggered": bb_triggered if bb_triggered is not None else False,
         "cross_up_144": cross_up_144 if cross_up_144 is not None else False,
         "cross_down_144": cross_down_144 if cross_down_144 is not None else False,
         "cross_up_169": cross_up_169 if cross_up_169 is not None else False,
-        "cross_down_169": cross_down_169 if cross_down_169 is not None else False
+        "cross_down_169": cross_down_169 if cross_down_169 is not None else False,
+        "ma_density_level": ma_density_level
     }
 
 

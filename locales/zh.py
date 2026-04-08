@@ -39,6 +39,7 @@ MESSAGES = {
     # 指标
     "indicator_bb": "BB 布林带",
     "indicator_vegas": "VEGAS 通道",
+    "indicator_ma_density": "均线密集",
     "indicator_selected": "📋 确认您的监控配置：\n\n• 交易所: {exchange}\n• 交易对: {symbol}\n• 时间周期: {timeframe}\n• 技术指标: {indicator}\n\n请确认是否保存？",
     
     # 确认
