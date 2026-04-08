@@ -17,7 +17,7 @@ python-telegram-bot>=20.0
 
 **运行环境**:
 - PM2 进程管理
-- 4 个独立进程: bot, engine, notifier, vip_checker
+- 3 个独立进程: bot, engine, notifier
 - SQLite WAL 模式
 
 ---
@@ -27,17 +27,17 @@ python-telegram-bot>=20.0
 ### 2.1 进程拓扑
 
 ```
-┌─────────────┐     ┌─────────────────┐     ┌──────────────┐     ┌──────────────┐
-│   bot.py    │     │ run_engine_loop │     │  notifier.py │     │vip_checker.py│
-│ (前端交互)   │     │  + market_engine│     │  (信号消费)   │     │  (VIP检测)   │
-└──────┬──────┘     └────────┬────────┘     └──────┬───────┘     └──────┬───────┘
-       │                     │                     │                    │
-       ▼                     ▼                     ▼                    ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                          SQLite (cryptosentinel.db)                          │
-│                 users / subscriptions / payments / system_config             │
-└──────────────────────────────────────────────────────────────────────────────┘
-       │                     ▲                     ▲
+┌─────────────┐     ┌─────────────────┐     ┌──────────────┐
+│   bot.py    │     │ run_engine_loop │     │  notifier.py │
+│ (前端交互)   │     │  + market_engine│     │  (信号消费)   │
+└──────┬──────┘     └────────┬────────┘     └──────┬───────┘
+       │                     │                     │
+       ▼                     ▼                     ▼
+┌──────────────────────────────────────────────────────────┐
+│                  SQLite (cryptosentinel.db)              │
+│                 users / subscriptions                    │
+└──────────────────────────────────────────────────────────┘
+       │                     ▲                     │
        │                     │                     │
        ▼                     │                     │
 ┌──────────────────┐         │                     │
@@ -58,7 +58,6 @@ python-telegram-bot>=20.0
 | bot.py | market_engine | SQLite subscriptions 表 | INSERT/UPDATE |
 | market_engine.py | notifier.py | cryptosentinel_cache.json | `{"EXCHANGE:SYMBOL:TIMEFRAME": {...}}` |
 | notifier.py | 用户 | Telegram API | HTML 消息 |
-| bot.py | 管理员 | Telegram API | 充值通知 |
 
 ### 2.3 缓存文件结构 (cryptosentinel_cache.json)
 
@@ -94,11 +93,7 @@ python-telegram-bot>=20.0
 ```sql
 CREATE TABLE users (
     uid INTEGER PRIMARY KEY,           -- Telegram 用户 ID
-    is_vip BOOLEAN DEFAULT 0,          -- VIP 状态 (0/1)
-    vip_expire_at TIMESTAMP,           -- VIP 到期时间 (ISO 格式)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deposit_address TEXT,              -- 预留：专属充值地址
-    notes TEXT,                        -- 备注
     language TEXT DEFAULT 'zh'         -- 语言设置 (zh/en)
 );
 ```
@@ -123,45 +118,6 @@ CREATE TABLE subscriptions (
 - BB: `{"period": 20, "std_dev": 2}`
 - VEGAS: `{"ema_fast": 144, "ema_slow": 169}`
 
-### 3.3 payments 表
-
-```sql
-CREATE TABLE payments (
-    payment_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uid INTEGER NOT NULL,
-    tx_hash TEXT NOT NULL,             -- TRC20 交易哈希
-    amount REAL,                       -- 金额 (可为空)
-    status TEXT DEFAULT 'pending',     -- pending/confirmed/rejected
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    reviewed_at TIMESTAMP,             -- 审核时间
-    admin_notes TEXT,
-    FOREIGN KEY (uid) REFERENCES users(uid)
-);
-```
-
-### 3.4 system_config 表
-
-```sql
-CREATE TABLE system_config (
-    key TEXT PRIMARY KEY,
-    value TEXT
-);
-```
-
-**预设 Key**:
-- `vip_price_usdt`: VIP 价格
-- `vip_duration_days`: VIP 天数
-- `deposit_address`: 充值地址
-
-### 3.5 free_vip_given 表
-
-```sql
-CREATE TABLE free_vip_given (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    given_count INTEGER DEFAULT 0       -- 已赠送免费 VIP 数量
-);
-```
-
 ---
 
 ## 4. File Topology & Core Functions
@@ -170,13 +126,13 @@ CREATE TABLE free_vip_given (
 
 ```python
 # 全局常量
-DEPOSIT_ADDRESS: str
+DONATE_ADDRESS: str
 SUPPORTED_SYMBOLS_CACHE: set
 SUPPORTED_SYMBOLS_CACHE_TIME: int
 SUPPORTED_SYMBOLS_CACHE_TTL: int = 3600
 
 # 状态机状态
-EXCHANGE, SYMBOL, TIMEFRAME, INDICATOR, CONFIRM, DEPOSIT_TX_HASH, BROADCAST_MESSAGE = range(7)
+EXCHANGE, SYMBOL, TIMEFRAME, INDICATOR, CONFIRM = range(5)
 CONVERSATION_TIMEOUT: int = 120
 
 # 核心异步函数
@@ -185,11 +141,7 @@ async def get_supported_symbols() -> set
 async def get_lang(update: Update) -> str
 async def safe_reply(update: Update, text: str, reply_markup: Optional[InlineKeyboardMarkup], parse_mode: Optional[str]) -> None
 async def safe_edit(update: Update, text: str, reply_markup: Optional[InlineKeyboardMarkup], parse_mode: Optional[str]) -> None
-async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
-async def add_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
-async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None
-async def add_flow_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None
 async def exchange_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 async def symbol_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 async def timeframe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
@@ -199,14 +151,12 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 async def list_subs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def delete_sub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
-async def vip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
-async def mystatus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
-async def deposit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
+async def donate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def admin_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
-async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
+async def broadcast_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 def main() -> None
 ```
 
@@ -216,47 +166,20 @@ def main() -> None
 # 全局常量
 DATABASE_NAME: str
 ADMIN_UID: int                          # 从环境变量读取
-DEPOSIT_ADDRESS: str                    # 从环境变量读取
-VIP_PRICE_USDT: int = 10
-VIP_DURATION_DAYS: int = 365
-MAX_SUBSCRIPTIONS_FREE: int = 1
-MAX_SUBSCRIPTIONS_VIP: int = 5
-FREE_VIP_USERS_LIMIT: int = 50
-FREE_VIP_DURATION_DAYS: int = 14
+MAX_SUBSCRIPTIONS: int = 10             # 每用户最大订阅数
 
 # 核心异步函数
 async def init_db() -> None
-async def get_config(key: str) -> Optional[str]
-async def set_config(key: str, value: str) -> None
-async def get_vip_price() -> float
-async def get_vip_duration() -> int
-async def get_deposit_address() -> str
 async def add_user(uid: int) -> None
 async def add_subscription(uid: int, exchange: str, symbol: str, timeframe: str, indicator: str, params: Optional[Dict]) -> int
 async def get_active_subs() -> Dict[str, List[Dict[str, Any]]]
 async def get_user_sub_count(uid: int) -> int
 async def get_user_subs(uid: int) -> List[Dict[str, Any]]
 async def delete_subscription(sub_id: int, uid: int) -> bool
-async def get_user_info(uid: int) -> Optional[Dict[str, Any]]
-async def set_user_vip(uid: int, days: int, admin_notes: str = None) -> bool
-async def check_and_update_vip_status() -> List[int]
-async def get_expiring_vip_users(days: int) -> List[Dict[str, Any]]
-async def get_max_subscriptions(uid: int) -> int
-async def create_payment_request(uid: int, tx_hash: str, amount: float = None) -> int
-async def get_pending_payments() -> List[Dict[str, Any]]
-async def get_payment(payment_id: int) -> Optional[Dict[str, Any]]
-async def approve_payment(payment_id: int, admin_uid: int) -> bool
-async def reject_payment(payment_id: int, admin_uid: int, reason: str = None) -> bool
-async def get_all_users_count() -> int
-async def get_vip_users_count() -> int
-async def get_all_users() -> List[int]
-async def get_vip_users() -> List[Dict[str, Any]]
-async def get_user_rank(uid: int) -> Optional[int]
-async def get_free_vip_given_count() -> int
-async def increment_free_vip_count() -> None
-async def try_give_free_vip(uid: int) -> bool
 async def get_user_language(uid: int) -> str
 async def set_user_language(uid: int, language: str) -> None
+async def get_all_users_count() -> int
+async def get_all_users() -> List[int]
 ```
 
 ### 4.3 market_engine.py (行情数据生产)
@@ -293,7 +216,6 @@ _bot_instance: Optional[Bot]
 # 核心异步函数
 async def get_bot() -> Bot
 async def send_telegram_message(uid: int, msg: str, retry_count: int = 0) -> bool
-async def mock_send_tg(uid: int, msg: str) -> bool
 async def load_market_cache() -> Dict[str, Any]
 
 # 同步信号检测函数
@@ -308,29 +230,17 @@ async def send_worker() -> None
 async def main() -> None
 ```
 
-### 4.5 vip_checker.py (VIP 到期检测)
-
-```python
-# 核心异步函数
-async def get_bot() -> Bot
-async def send_vip_reminder(uid: int, days_left: int) -> bool
-async def send_expired_notification(uid: int) -> bool
-async def check_vip_expiry() -> None
-async def vip_checker_loop() -> None              # 每小时执行
-async def main() -> None
-```
-
-### 4.6 run_engine_loop.py (行情引擎循环入口)
+### 4.5 run_engine_loop.py (行情引擎循环入口)
 
 ```python
 # 全局常量
-ENGINE_INTERVAL: int = 30
+ENGINE_INTERVAL: int = 60
 
 # 核心异步函数
 async def main() -> None
 ```
 
-### 4.7 i18n.py (国际化工具)
+### 4.6 i18n.py (国际化工具)
 
 ```python
 # 全局常量
@@ -453,7 +363,7 @@ key = f"{exchange}:{symbol}"  # 错误
 ```python
 # ✅ 正确 - 从环境变量读取敏感配置
 ADMIN_UID = int(os.environ.get("ADMIN_UID", "0"))
-DEPOSIT_ADDRESS = os.environ.get("DEPOSIT_ADDRESS", "")
+DONATE_ADDRESS = os.environ.get("DONATE_ADDRESS", "")
 
 # ❌ 禁止 - 硬编码敏感信息
 ADMIN_UID = 123456789
@@ -472,18 +382,13 @@ if current_timestamp == prev_timestamp:
 
 ---
 
-## 6. VIP 系统业务规则
+## 6. 业务规则
 
 | 规则 | 值 |
 |------|-----|
-| VIP 价格 | 10 USDT |
-| VIP 时长 | 365 天 |
-| 普通用户配额 | 1 个指标 |
-| VIP 用户配额 | 5 个指标 |
-| 免费赠送名额 | 前 50 名用户 |
-| 免费赠送时长 | 14 天 |
-| 充值确认方式 | 管理员手动批准 |
-| 到期提醒 | 7天、3天 |
+| 每用户订阅上限 | 10 个指标 |
+| 打赏地址 | TRC20 USDT |
+| 管理员权限 | 群发消息、统计 |
 
 ---
 
@@ -500,10 +405,25 @@ if current_timestamp == prev_timestamp:
 
 1. `market_engine.py`: 添加计算函数 → 在 `fetch_and_calc()` 中调用 → 写入 result
 2. `notifier.py`: 添加 `check_xxx_signal_change()` → 在 `check_signal()` 中添加分支 → 更新 `update_signal_state()`
-3. `bot.py`: 在 `add_flow_callback()` 中添加按钮 → 添加参数配置
+3. `bot.py`: 在 `indicator_callback()` 中添加按钮 → 添加参数配置
 4. `locales/zh.py` `en.py`: 添加消息模板
 
 ---
 
-*文档版本: 2.0*
-*生成时间: 2026-03-07*
+## 9. 命令列表
+
+| 命令 | 功能 |
+|------|------|
+| `/start` | 显示功能菜单，添加监控 |
+| `/list` | 查看订阅列表 |
+| `/delete [id]` | 删除订阅 |
+| `/donate` | 显示打赏地址 |
+| `/myid` | 查看用户 UID |
+| `/language` | 切换语言 |
+| `/help` | 显示帮助 |
+| `/admin` | 管理员面板 (仅管理员) |
+
+---
+
+*文档版本: 3.0*
+*生成时间: 2026-04-08*

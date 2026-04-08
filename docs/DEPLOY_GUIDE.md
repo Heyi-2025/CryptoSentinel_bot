@@ -126,8 +126,8 @@ TELEGRAM_BOT_TOKEN=你的Bot_Token
 # 管理员 UID（从 @userinfobot 获取）
 ADMIN_UID=你的Telegram_UID
 
-# VIP 充值地址（TRC20）
-DEPOSIT_ADDRESS=你的TRC20钱包地址
+# 打赏地址（TRC20）
+DONATE_ADDRESS=你的TRC20钱包地址
 ```
 
 ### 3.4 初始化数据库
@@ -143,7 +143,7 @@ python3 -c "import asyncio; from db_manager import init_db; asyncio.run(init_db(
 ls -la cryptosentinel.db
 ```
 
-### 3.4 创建启动脚本
+### 3.5 创建启动脚本
 
 创建 `run_bot.sh`：
 
@@ -174,23 +174,13 @@ export $(cat .env | xargs)
 python3 notifier.py
 ```
 
-创建 `run_vip.sh`：
-
-```bash
-#!/bin/bash
-cd ~/cryptosentinel
-source venv/bin/activate
-export $(cat .env | xargs)
-python3 vip_checker.py
-```
-
 赋予执行权限：
 
 ```bash
 chmod +x run_*.sh
 ```
 
-### 3.8 启动所有服务
+### 3.6 启动所有服务
 
 ```bash
 cd ~/cryptosentinel
@@ -203,9 +193,6 @@ pm2 start run_engine.sh --name cryptosentinel-engine
 
 # 启动通知器
 pm2 start run_notifier.sh --name cryptosentinel-notifier
-
-# 启动 VIP 检查器
-pm2 start run_vip.sh --name cryptosentinel-vip
 
 # 保存进程列表
 pm2 save
@@ -230,7 +217,6 @@ pm2 status
 │ cryptosentinel-bot       │ fork     │ 0    │ online│ 0.0%    │ 120MB    │
 │ cryptosentinel-engine   │ fork     │ 0    │ online│ 0.0%    │ 95MB     │
 │ cryptosentinel-notifier │ fork     │ 0    │ online│ 0.0%    │ 80MB     │
-│ cryptosentinel-vip      │ fork     │ 0    │ online│ 0.0%    │ 30MB     │
 └─────┴──────────────────────┴──────────┴──────┴───────┴──────────┘
 ```
 
@@ -240,9 +226,9 @@ pm2 status
 
 | 命令 | 预期结果 |
 |------|----------|
-| `/start` | 显示交易所选择按钮 |
+| `/start` | 显示功能菜单 |
 | `/language` | 显示语言选择按钮 |
-| `/vip` | 显示 VIP 说明和充值地址 |
+| `/donate` | 显示打赏地址 |
 | `/myid` | 显示你的 UID |
 | `/help` | 显示命令列表 |
 
@@ -250,6 +236,8 @@ pm2 status
 
 ```
 发送 /start
+    ↓
+点击"添加监控"
     ↓
 选择交易所（OKX 或 Binance）
     ↓
@@ -269,6 +257,8 @@ pm2 status
 ```
 发送 /start
     ↓
+点击"添加监控"
+    ↓
 选择交易所
     ↓
 输入不存在的币种（如 ABC/USDT）
@@ -276,16 +266,18 @@ pm2 status
 应显示"该交易对不被支持"并列出热门币种
 ```
 
-### 4.5 测试 VIP 功能（管理员）
+### 4.5 测试管理员功能（管理员）
 
 ```
 发送 /admin
     ↓
 应显示管理员面板
     ↓
-点击"充值申请列表"
+点击"群发消息"
     ↓
-应显示待处理列表（暂无）
+输入消息内容
+    ↓
+确认发送
 ```
 
 ### 4.6 查看日志
@@ -349,26 +341,12 @@ rm -f cryptosentinel.db-wal cryptosentinel.db-shm
 pm2 restart all
 ```
 
-### Q4：VIP 充值后没有开通？
-
-```bash
-# 检查充值申请列表（管理员）
-# 发送 /admin → 点击"充值申请列表"
-
-# 手动开通 VIP（管理员）
-/setvip 用户UID 天数
-
-# 示例：为用户 123456789 开通 365 天 VIP
-/setvip 123456789 365
-```
-
-### Q5：如何修改 VIP 价格？
+### Q4：如何修改订阅配额？
 
 编辑 `db_manager.py`：
 
 ```python
-VIP_PRICE_USDT = 10        # VIP 价格
-VIP_DURATION_DAYS = 365    # VIP 时长（天）
+MAX_SUBSCRIPTIONS = 10  # 修改为需要的配额
 ```
 
 修改后重启：
@@ -377,22 +355,13 @@ VIP_DURATION_DAYS = 365    # VIP 时长（天）
 pm2 restart cryptosentinel-bot
 ```
 
-### Q6：如何修改提醒格式？
+### Q5：如何修改提醒格式？
 
-**BB 信号**：编辑 `notifier.py` 第 222 行
+**BB 信号**：编辑 `notifier.py` 中的 BB 信号消息格式
 
-```python
-return f"🚀 BB 突破信号\n{symbol} 收盘价 {close:.2f} 突破布林上轨 {bbu:.2f}"
-```
+**VEGAS 信号**：编辑 `notifier.py` 中的 VEGAS 信号消息格式
 
-**VEGAS 信号**：编辑 `notifier.py` 第 244-249 行
-
-```python
-if signal_type == "cross_up_144":
-    msg_parts.append(f"⬆️ {symbol} K线上穿 EMA144 ({ema_144:.2f})")
-```
-
-### Q7：如何更新代码？
+### Q6：如何更新代码？
 
 ```bash
 cd ~/cryptosentinel
@@ -404,7 +373,7 @@ git pull
 pm2 restart all
 ```
 
-### Q8：如何备份数据？
+### Q7：如何备份数据？
 
 ```bash
 # 备份数据库
@@ -414,7 +383,7 @@ cp cryptosentinel.db cryptosentinel.db.backup
 scp user@vps_ip:~/cryptosentinel/cryptosentinel.db ./
 ```
 
-### Q9：内存占用过高？
+### Q8：内存占用过高？
 
 ```bash
 # 查看内存占用
@@ -424,7 +393,7 @@ pm2 monit
 pm2 start cryptosentinel-bot --cron-restart="0 6 * * *"
 ```
 
-### Q10：如何查看支持哪些币种？
+### Q9：如何查看支持哪些币种？
 
 Bot 会自动从 OKX API 获取支持的交易对列表。
 
@@ -480,7 +449,6 @@ cryptosentinel/
 ├── db_manager.py            # 数据库管理
 ├── market_engine.py         # 行情数据生产
 ├── notifier.py              # 信号监控与推送
-├── vip_checker.py           # VIP 到期检测
 ├── run_engine_loop.py       # 行情引擎循环脚本
 ├── i18n.py                  # 国际化工具
 ├── locales/                 # 语言包
@@ -498,5 +466,5 @@ cryptosentinel/
 
 ---
 
-*文档版本：v1.5*  
-*最后更新：2025-03-07*
+*文档版本：v3.0*  
+*最后更新：2026-04-08*

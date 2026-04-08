@@ -52,11 +52,9 @@ python3 -m venv venv
 # 激活虚拟环境
 source venv/bin/activate
 
-# 安装核心依赖（注意：pandas_ta 可能因为 numba 不兼容无法安装，我们用纯 pandas 实现）
+# 安装核心依赖
 pip install aiosqlite ccxt pandas numpy python-telegram-bot
 ```
-
-> 💡 **小贴士**：如果你看到 `pandas_ta` 安装失败的报错，不用管它，我们的代码用的是纯 pandas 计算指标，不需要 pandas_ta。
 
 ---
 
@@ -95,6 +93,8 @@ nano .env
 在 `.env` 文件中填入你的 Bot Token：
 ```
 TELEGRAM_BOT_TOKEN=你的Bot_Token
+ADMIN_UID=你的Telegram_UID
+DONATE_ADDRESS=你的TRC20钱包地址
 ```
 
 ---
@@ -113,7 +113,7 @@ python3 -c "import asyncio; from db_manager import init_db; asyncio.run(init_db(
 
 ---
 
-### 1.4 安装 PM2 并配置守护进程
+### 1.5 安装 PM2 并配置守护进程
 
 #### 步骤 1：安装 Node.js（PM2 依赖）
 
@@ -241,7 +241,7 @@ sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -
 
 ### 2.1 前端同步修改：Bot 按钮
 
-打开 `bot.py`，找到 `start` 函数里的键盘配置，大约在 **第 100-106 行**：
+打开 `bot.py`，找到交易所选择的键盘配置：
 
 ```python
 # 找到这段代码
@@ -272,10 +272,10 @@ keyboard = [
 
 好消息是：**你几乎不需要改任何代码！**
 
-因为 `market_engine.py` 第 68-72 行已经用了通用方式获取交易所实例：
+因为 `market_engine.py` 已经用了通用方式获取交易所实例：
 
 ```python
-# market_engine.py 第 68-72 行
+# market_engine.py
 exchange_class = getattr(ccxt, exchange_name.lower())  # 自动根据名称获取
 exchange = exchange_class({
     "enableRateLimit": True,
@@ -300,12 +300,12 @@ print(ccxt.exchanges)  # 打印所有支持的交易所
 
 ### 3.1 数据生产：在 market_engine.py 中计算 MACD
 
-打开 `market_engine.py`，找到 `calculate_ema` 和 `calculate_bbands` 函数的位置（在 **第 29-44 行**）。
+打开 `market_engine.py`，找到 `calculate_ema` 和 `calculate_bbands` 函数的位置。
 
 在它们后面添加 MACD 计算函数：
 
 ```python
-# 在 market_engine.py 第 44 行后面添加
+# 在 market_engine.py 中添加
 
 def calculate_macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> dict:
     """
@@ -330,17 +330,17 @@ def calculate_macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: in
     return {"macd": macd, "signal": signal_line, "histogram": histogram}
 ```
 
-然后在 `fetch_and_calc` 函数里调用它。找到计算 EMA 的位置（在 **第 99-100 行**）：
+然后在 `fetch_and_calc` 函数里调用它：
 
 ```python
-# 在第 100 行后面添加
+# 在 fetch_and_calc 函数里添加
 macd_result = calculate_macd(close_series)
 df["MACD_12_26_9"] = macd_result["macd"]
 df["MACD_signal"] = macd_result["signal"]
 df["MACD_hist"] = macd_result["histogram"]
 ```
 
-最后在提取结果的字典里添加字段。找到返回 result 的位置（在 **第 104-119 行**）：
+最后在提取结果的字典里添加字段：
 
 ```python
 result = {
@@ -353,12 +353,10 @@ result = {
 
 ### 3.2 信号比对：在 notifier.py 中添加判定逻辑
 
-打开 `notifier.py`，找到 `check_vegas_signal` 函数（在 **第 59-69 行**）。
-
-在它后面添加 MACD 信号检查函数：
+打开 `notifier.py`，添加 MACD 信号检查函数：
 
 ```python
-# 在 notifier.py 第 69 行后面添加
+# 在 notifier.py 中添加
 
 def check_macd_cross_signal(market_data: Dict[str, Any], sub: Dict[str, Any]) -> bool:
     """
@@ -377,7 +375,7 @@ def check_macd_cross_signal(market_data: Dict[str, Any], sub: Dict[str, Any]) ->
     return macd > signal
 ```
 
-然后找到 `check_signal` 函数（在 **第 72-106 行**），添加 MACD 分支：
+然后找到 `check_signal` 函数，添加 MACD 分支：
 
 ```python
 # 在 check_signal 函数里添加新分支
@@ -412,7 +410,7 @@ def check_signal(market_data: Dict[str, Any], sub: Dict[str, Any]) -> Optional[s
 
 ### 3.3 前端同步：Bot 添加按钮
 
-打开 `bot.py`，找到指标选择键盘的位置（在 **第 198-204 行**）：
+打开 `bot.py`，找到指标选择键盘：
 
 ```python
 # 找到这段代码
@@ -438,7 +436,7 @@ keyboard = [
 reply_markup = InlineKeyboardMarkup(keyboard)
 ```
 
-同时修改 `confirm_callback` 里的参数构建（在 **第 294-297 行**）：
+同时修改 `confirm_callback` 里的参数构建：
 
 ```python
 if indicator == "BB":
@@ -470,14 +468,7 @@ pm2 logs cryptosentinel-bot --lines 50
 
 #### 可能原因 2：Bot Token 填错了
 
-打开 `bot.py`，找到最后几行：
-
-```python
-def main() -> None:
-    TOKEN = "YOUR_BOT_TOKEN_HERE"  # ← 检查这里！
-```
-
-确保填入了正确的 Bot Token（找 @BotFather 要）。
+检查 `.env` 文件中的 `TELEGRAM_BOT_TOKEN` 是否正确。
 
 #### 可能原因 3：数据库被锁住
 
@@ -523,15 +514,13 @@ curl -I https://www.okx.com
 
 **步骤 3：增加超时时间**
 
-打开 `market_engine.py`，找到 **第 20 行**：
+打开 `market_engine.py`：
 
 ```python
 REQUEST_TIMEOUT = 10  # 改成 20 或 30
 ```
 
 **步骤 4：增加重试次数和休眠时间**
-
-找到 **第 22-26 行**：
 
 ```python
 MAX_RETRIES = 3        # 改成 5
@@ -576,29 +565,6 @@ rm -f cryptosentinel.db-shm
 pm2 restart all
 ```
 
-**步骤 4：预防措施 - 减少数据库访问频率**
-
-如果经常锁死，可以修改代码让 notifier 不要每次都查数据库。打开 `notifier.py` 的 `watch_and_notify` 函数（在 **第 109 行**），把数据库查询间隔改大：
-
-```python
-# 原来
-await asyncio.sleep(5)
-
-# 改成（每 60 秒查一次数据库）
-if not hasattr(watch_and_notify, 'db_query_counter'):
-    watch_and_notify.db_query_counter = 0
-
-watch_and_notify.db_query_counter += 1
-if watch_and_notify.db_query_counter % 12 == 0:  # 5秒 * 12 = 60秒
-    subs_by_key = await get_active_subs()
-    # ... 重新加载缓存
-else:
-    # 使用上一次的结果
-    pass
-
-await asyncio.sleep(5)
-```
-
 ---
 
 ### 故障 4：内存不足 (OOM)
@@ -622,7 +588,7 @@ pm2 monit
 
 **步骤 2：减少 DataFrame 大小**
 
-打开 `market_engine.py`，找到 **第 78 行**：
+打开 `market_engine.py`：
 
 ```python
 limit=200  # 改成 100，减少内存占用
@@ -630,7 +596,7 @@ limit=200  # 改成 100，减少内存占用
 
 **步骤 3：定期重启**
 
-修改 `ecosystem.config.js`，添加定时重启：
+添加定时重启配置：
 
 ```javascript
 module.exports = {
@@ -654,12 +620,10 @@ module.exports = {
 
 | 命令 | 用法示例 | 功能说明 |
 |------|----------|----------|
-| `/start` | `/start` | 启动添加监控流程（5步状态机） |
+| `/start` | `/start` | 显示功能菜单 |
 | `/list` | `/list` | 查看当前用户所有监控任务 |
 | `/delete` | `/delete 123` | 删除编号为 123 的监控任务 |
-| `/vip` | `/vip` | 查看 VIP 说明和充值地址 |
-| `/deposit` | `/deposit abc123...` | 提交充值申请 |
-| `/mystatus` | `/mystatus` | 查看我的 VIP 状态 |
+| `/donate` | `/donate` | 显示打赏地址 |
 | `/myid` | `/myid` | 查看我的用户 ID |
 | `/help` | `/help` | 查看所有可用命令 |
 | `/cancel` | `/cancel` | 取消当前进行中的对话 |
@@ -669,24 +633,8 @@ module.exports = {
 | 命令 | 用法示例 | 功能说明 |
 |------|----------|----------|
 | `/admin` | `/admin` | 打开管理员控制面板（按钮交互） |
-| `/setvip` | `/setvip 123456 365` | 为用户 123456 开通 365 天 VIP |
 
-### 5.3 VIP 价格配置
-
-配置文件位于 `db_manager.py`：
-
-```python
-VIP_PRICE_USDT = 10        # VIP 价格
-VIP_DURATION_DAYS = 365    # VIP 时长（天）
-DEPOSIT_ADDRESS = "TQ66..." # 充值地址
-```
-
-修改后需重启 Bot：
-```bash
-pm2 restart cryptosentinel-bot
-```
-
-### 5.4 /list 命令示例
+### 5.3 /list 命令示例
 
 ```
 用户发送: /list
@@ -703,7 +651,7 @@ Bot 回复:
 💡 使用 /delete [编号] 删除任务
 ```
 
-### 5.3 /delete 命令示例
+### 5.4 /delete 命令示例
 
 ```
 用户发送: /delete 1
@@ -727,12 +675,12 @@ locales/
 
 ### 6.2 修改提示文字
 
-**示例：修改 VIP 说明**
+**示例：修改打赏说明**
 
 ```python
 # locales/zh.py
 MESSAGES = {
-    "vip_benefits": "📋 VIP 权益：\n• 监控指标：5个（普通用户 1个）\n• 有效期：{duration} 天",
+    "donate_content": "感谢您使用 CryptoSentinel！\n\n如果这个项目对您有帮助，欢迎打赏支持开发者 ❤️\n\n📍 打赏地址 (TRC20)：\n<code>{address}</code>",
     ...
 }
 ```
@@ -747,7 +695,7 @@ pm2 restart cryptosentinel-bot
 ```python
 # locales/zh.py
 MESSAGES = {
-    "btn_confirm": "✅ 确认开通",
+    "btn_confirm": "✅ 确认",
     "btn_cancel": "❌ 取消",
     ...
 }
@@ -778,18 +726,8 @@ MESSAGES = {
 }
 
 # 代码中使用
-text = get_message("max_subs_reached", lang, max=5)
+text = get_message("max_subs_reached", lang, max=10)
 ```
-
-### 6.6 语言包键名规范
-
-| 类型 | 前缀 | 示例 |
-|------|------|------|
-| 标题 | `_title` | `vip_title` |
-| 状态 | `_status` | `vip_status_vip` |
-| 错误 | `error_` | `error_user_not_found` |
-| 按钮 | `btn_` | `btn_confirm` |
-| 提示 | 直接描述 | `deposit_hint` |
 
 ---
 
@@ -846,49 +784,6 @@ LANGUAGES = {
 
 ---
 
-## 8. 常见问题排查
-
-### 8.1 文字显示为键名
-
-**问题**：用户看到 `vip_title` 而不是 "💎 VIP 会员"
-
-**原因**：语言包中缺少对应的键
-
-**解决**：检查 `locales/zh.py` 和 `locales/en.py` 是否包含该键
-
-### 8.2 语言切换不生效
-
-**检查步骤**：
-```bash
-# 进入数据库
-sqlite3 cryptosentinel.db
-
-# 检查用户语言设置
-SELECT uid, language FROM users WHERE uid = 用户ID;
-
-# 手动修改
-UPDATE users SET language = 'zh' WHERE uid = 用户ID;
-```
-
-### 8.3 参数替换失败
-
-**问题**：文字显示 `{max}` 而不是实际值
-
-**原因**：参数名不匹配
-
-**解决**：
-```python
-# 语言包中使用 {max}
-MESSAGES = {
-    "key": "上限: {max}",
-}
-
-# 代码中必须使用 max=xxx
-text = get_message("key", lang, max=5)
-```
-
----
-
 ## 附录：快速命令速查表
 
 ```bash
@@ -916,5 +811,5 @@ pm2 save && sudo pm2 startup
 
 ---
 
-*文档版本：v1.4*  
-*最后更新：2025-03-07*
+*文档版本：v3.0*  
+*最后更新：2026-04-08*

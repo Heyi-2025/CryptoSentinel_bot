@@ -52,27 +52,6 @@ await safe_reply(
 )
 ```
 
-### 示例：修改 VIP 函数
-
-**原代码：**
-```python
-text = (
-    f"💎 VIP 会员\n\n"
-    f"📋 您的状态：\n{status_text}\n\n"
-    ...
-)
-```
-
-**新代码：**
-```python
-lang = await get_lang(update)
-text = (
-    f"{get_message('vip_title', lang)}\n\n"
-    f"📋 您的状态：\n{status_text}\n\n"
-    ...
-)
-```
-
 ## 4. 添加 /language 命令
 
 ```python
@@ -128,8 +107,8 @@ application.add_handler(CallbackQueryHandler(language_callback, pattern="^lang_"
 **原代码：**
 ```python
 keyboard = [
-    [InlineKeyboardButton("📝 提交充值申请", callback_data="deposit_submit")],
-    [InlineKeyboardButton("📊 我的VIP状态", callback_data="vip_status")]
+    [InlineKeyboardButton("✅ 确认", callback_data="confirm")],
+    [InlineKeyboardButton("❌ 取消", callback_data="cancel")]
 ]
 ```
 
@@ -138,12 +117,12 @@ keyboard = [
 lang = await get_lang(update)
 keyboard = [
     [InlineKeyboardButton(
-        get_button_text("btn_submit_deposit", lang), 
-        callback_data="deposit_submit"
+        get_button_text("btn_confirm", lang), 
+        callback_data="confirm"
     )],
     [InlineKeyboardButton(
-        get_button_text("btn_vip_status", lang), 
-        callback_data="vip_status"
+        get_button_text("btn_cancel", lang), 
+        callback_data="cancel"
     )]
 ]
 ```
@@ -159,9 +138,7 @@ keyboard = [
 | `confirm_callback` | 保存成功/失败提示 |
 | `list_subs` | 订阅列表标题、空列表提示 |
 | `delete_sub` | 删除成功/失败提示 |
-| `vip` | VIP 说明、充值地址 |
-| `mystatus` | VIP 状态显示 |
-| `deposit_command` | 充值提示 |
+| `donate` | 打赏地址显示 |
 | `admin_panel` | 管理员面板文字 |
 | `button_callback` | 各种按钮回显文字 |
 
@@ -169,17 +146,13 @@ keyboard = [
 
 | 原文本 | 键名 |
 |--------|------|
-| "📝 提交充值申请" | `btn_submit_deposit` |
-| "📊 我的VIP状态" | `btn_vip_status` |
-| "💎 开通VIP" | `btn_open_vip` |
 | "✅ 确认" | `btn_confirm` |
 | "❌ 取消" | `btn_cancel` |
-| "✅ 确认开通" | `btn_approve` |
-| "❌ 拒绝申请" | `btn_reject` |
 | "⬅️ 返回" | `admin_btn_back` |
-| "💰 充值申请列表" | `admin_btn_payments` |
-| "👥 VIP 用户列表" | `admin_btn_vip_list` |
 | "📢 群发消息" | `admin_btn_broadcast` |
+| "📊 统计信息" | `admin_btn_stats` |
+| "🇨🇳 中文" | `btn_lang_zh` |
+| "🇺🇸 English" | `btn_lang_en` |
 
 ## 9. 快速替换方法
 
@@ -196,5 +169,10 @@ keyboard = [
 
 1. 发送 `/language` 切换语言
 2. 发送 `/start` 验证欢迎文字
-3. 发送 `/vip` 验证 VIP 说明
+3. 发送 `/donate` 验证打赏地址显示
 4. 发送 `/admin` 验证管理员面板
+
+---
+
+*文档版本: 3.0*
+*最后更新: 2026-04-08*

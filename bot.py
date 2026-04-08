@@ -5,6 +5,7 @@ Telegram Bot 前端交互模块
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime
 from typing import Optional, Dict, Any
 
@@ -22,16 +23,12 @@ from telegram.ext import (
 
 from db_manager import (
     add_user, add_subscription, get_user_sub_count, get_user_subs, delete_subscription,
-    get_user_info, get_max_subscriptions, try_give_free_vip,
-    create_payment_request, get_pending_payments, get_payment,
-    approve_payment, reject_payment,
-    get_vip_price, get_vip_duration, get_deposit_address,
-    get_all_users, get_vip_users, get_all_users_count, get_vip_users_count,
-    get_expiring_vip_users, check_and_update_vip_status,
-    set_config, ADMIN_UID, get_user_language, set_user_language
+    get_user_info, get_all_users, get_all_users_count,
+    ADMIN_UID, get_user_language, set_user_language, MAX_SUBSCRIPTIONS
 )
 
 from i18n import get_message, detect_language, get_button_text
+import ccxt.async_support as ccxt
 
 
 logging.basicConfig(
@@ -40,9 +37,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-DEPOSIT_ADDRESS = "TQ66Jy7fgubE9H3dj981gfqnEfodSBVPfx"
+DONATE_ADDRESS = os.environ.get("DONATE_ADDRESS", "TQ66Jy7fgubE9H3dj981gfqnEfodSBVPfx")
 
-SUPPORTED_SYMBOLS_CACHE = {}
+SUPPORTED_SYMBOLS_CACHE = set()
 SUPPORTED_SYMBOLS_CACHE_TIME = 0
 SUPPORTED_SYMBOLS_CACHE_TTL = 3600
 
@@ -52,102 +49,41 @@ SUPPORTED_SYMBOLS_CACHE_TTL = 3600
     TIMEFRAME,
     INDICATOR,
     CONFIRM,
-    DEPOSIT_TX_HASH,
-    BROADCAST_MESSAGE,
-) = range(7)
+) = range(5)
 
 CONVERSATION_TIMEOUT = 120
 
 
-async def fetch_okx_symbols() -> set:
-    """
-    从 OKX API 获取支持的交易对列表
-    """
-    import ccxt.async_support as ccxt
-    
-    try:
-        exchange = ccxt.okx({"enableRateLimit": True})
-        markets = await exchange.fetch_markets()
-        await exchange.close()
-        
-        symbols = set()
-        for market in markets:
-            symbol = market.get("symbol")
-            if symbol and "/USDT" in symbol:
-                symbols.add(symbol)
-        
-        return symbols
-    except Exception as e:
-        logger.error(f"获取 OKX 交易对失败: {e}")
-        return set()
-
-
-async def get_supported_symbols() -> set:
-    """
-    获取支持的交易对列表（带缓存）
-    """
-    import time
-    
-    global SUPPORTED_SYMBOLS_CACHE, SUPPORTED_SYMBOLS_CACHE_TIME
-    
-    current_time = time.time()
-    
-    if SUPPORTED_SYMBOLS_CACHE and (current_time - SUPPORTED_SYMBOLS_CACHE_TIME) < SUPPORTED_SYMBOLS_CACHE_TTL:
-        return SUPPORTED_SYMBOLS_CACHE
-    
-    symbols = await fetch_okx_symbols()
-    
-    if symbols:
-        SUPPORTED_SYMBOLS_CACHE = symbols
-        SUPPORTED_SYMBOLS_CACHE_TIME = current_time
-    
-    return SUPPORTED_SYMBOLS_CACHE
-
-
 async def get_lang(update: Update) -> str:
-    """
-    获取用户的语言设置
-    """
+    """获取用户的语言设置"""
     if not update.effective_user:
         return "zh"
-    
     uid = update.effective_user.id
-    
     lang = await get_user_language(uid)
     if lang:
         return lang
-    
     lang_code = update.effective_user.language_code
     return detect_language(lang_code)
 
 
-async def safe_reply(update: Update, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None, parse_mode: Optional[str] = None) -> None:
-    """
-    安全发送消息，自动处理 update 来源
-    """
+async def safe_reply(update: Update, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
+    """安全发送消息"""
     if update.message:
-        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="HTML")
     elif update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode="HTML")
 
 
-async def safe_edit(update: Update, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None, parse_mode: Optional[str] = None) -> None:
-    """
-    安全编辑消息
-    """
-    if update.callback_query:
-        try:
-            await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
-        except Exception:
-            pass
+async def safe_edit(update: Update, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
+    """安全编辑消息"""
+    query = update.callback_query
+    if query:
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="HTML")
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    全局错误处理回调
-    """
+    """全局错误处理"""
     logger.error(f"处理更新时发生错误: {context.error}")
-    
     try:
         lang = await get_lang(update) if update else "zh"
         await safe_reply(update, get_message("error_timeout", lang))
@@ -155,1421 +91,331 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         pass
 
 
-async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    显示主菜单
-    """
-    lang = await get_lang(update) if update.effective_user else "zh"
-    
-    keyboard = [
-        [
-            InlineKeyboardButton(get_button_text("btn_add_monitor", lang), callback_data="menu_add"),
-            InlineKeyboardButton(get_button_text("btn_my_monitors", lang), callback_data="menu_list"),
-        ],
-        [
-            InlineKeyboardButton(get_button_text("btn_vip_info", lang), callback_data="menu_vip"),
-            InlineKeyboardButton(get_button_text("btn_my_status", lang), callback_data="menu_status"),
-        ],
-        [
-            InlineKeyboardButton(get_button_text("btn_my_uid", lang), callback_data="menu_myid"),
-            InlineKeyboardButton(get_button_text("btn_contact", lang), callback_data="menu_contact"),
-        ],
-        [
-            InlineKeyboardButton(get_button_text("btn_language", lang), callback_data="menu_language"),
-            InlineKeyboardButton(get_button_text("btn_help", lang), callback_data="menu_help"),
-        ],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await safe_reply(update, get_message("main_menu", lang), reply_markup=reply_markup)
+async def fetch_okx_symbols() -> set:
+    """从 OKX API 获取支持的交易对列表"""
+    try:
+        exchange = ccxt.okx({"enableRateLimit": True})
+        markets = await exchange.fetch_markets()
+        await exchange.close()
+        symbols = set()
+        for market in markets:
+            symbol = market.get("symbol")
+            if symbol and "/USDT" in symbol:
+                symbols.add(symbol)
+        return symbols
+    except Exception as e:
+        logger.error(f"获取 OKX 交易对失败: {e}")
+        return set()
+
+
+async def get_supported_symbols() -> set:
+    """获取支持的交易对列表（带缓存）"""
+    global SUPPORTED_SYMBOLS_CACHE, SUPPORTED_SYMBOLS_CACHE_TIME
+    current_time = time.time()
+    if SUPPORTED_SYMBOLS_CACHE and (current_time - SUPPORTED_SYMBOLS_CACHE_TIME) < SUPPORTED_SYMBOLS_CACHE_TTL:
+        return SUPPORTED_SYMBOLS_CACHE
+    symbols = await fetch_okx_symbols()
+    if symbols:
+        SUPPORTED_SYMBOLS_CACHE = symbols
+        SUPPORTED_SYMBOLS_CACHE_TIME = current_time
+    return SUPPORTED_SYMBOLS_CACHE
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    /start 命令入口，显示功能菜单
-    """
+    """/start 命令入口"""
     try:
         if not update.effective_user:
             return ConversationHandler.END
-        
         uid = update.effective_user.id
+        lang = await get_lang(update)
         await add_user(uid)
-        await try_give_free_vip(uid)
-        
-        await show_main_menu(update, context)
-        return ConversationHandler.END
-
+        sub_count = await get_user_sub_count(uid)
+        if sub_count >= MAX_SUBSCRIPTIONS:
+            await safe_reply(update, get_message("max_subs_reached", lang, max=MAX_SUBSCRIPTIONS))
+            return ConversationHandler.END
+        keyboard = [[InlineKeyboardButton("Binance", callback_data="Binance"), InlineKeyboardButton("OKX", callback_data="OKX")]]
+        await safe_reply(update, get_message("welcome", lang), reply_markup=InlineKeyboardMarkup(keyboard))
+        return EXCHANGE
     except Exception as e:
         logger.error(f"start 命令异常: {e}")
         return ConversationHandler.END
 
 
-async def add_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    开始添加监控流程
-    """
-    try:
-        if not update.effective_user:
-            return ConversationHandler.END
-        
-        uid = update.effective_user.id
-        lang = await get_lang(update)
-        
-        max_subs = await get_max_subscriptions(uid)
-        sub_count = await get_user_sub_count(uid)
-        
-        if sub_count >= max_subs:
-            await safe_reply(
-                update,
-                get_message("max_subs_reached", lang, max=max_subs)
-            )
-            return ConversationHandler.END
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("Binance", callback_data="Binance"),
-                InlineKeyboardButton("OKX", callback_data="OKX"),
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await safe_reply(
-            update,
-            get_message("welcome", lang),
-            reply_markup=reply_markup
-        )
-        
-        return EXCHANGE
-        
-    except Exception as e:
-        logger.error(f"add_monitor 异常: {e}")
-        return ConversationHandler.END
-
-
-async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
-    """
-    处理菜单按钮回调
-    """
-    query = update.callback_query
-    if not query:
-        return
-    
-    lang = await get_lang(update)
-    uid = update.effective_user.id
-    
-    if data == "menu_add":
-        max_subs = await get_max_subscriptions(uid)
-        sub_count = await get_user_sub_count(uid)
-        
-        if sub_count >= max_subs:
-            await query.edit_message_text(
-                get_message("max_subs_reached", lang, max=max_subs),
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")
-                ]])
-            )
-            return
-        
-        context.user_data["add_flow"] = {"step": "exchange"}
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("Binance", callback_data="add_Binance"),
-                InlineKeyboardButton("OKX", callback_data="add_OKX"),
-            ],
-            [InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]
-        ]
-        await query.edit_message_text(
-            get_message("welcome", lang),
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    
-    elif data == "menu_list":
-        subs = await get_user_subs(uid)
-        
-        if not subs:
-            text = "📭 您当前没有任何监控任务\n\n发送 /start 添加新监控"
-        else:
-            text = "📋 您的监控任务列表：\n\n"
-            for sub in subs:
-                status = "✅" if sub["is_active"] else "❌"
-                indicator_name = "BB 布林带" if sub["indicator"] == "BB" else "VEGAS 通道"
-                text += (
-                    f"{status} #{sub['sub_id']} {sub['exchange']} {sub['symbol']}\n"
-                    f"   周期: {sub['timeframe']} | 指标: {indicator_name}\n\n"
-                )
-            text += "💡 使用 /delete [编号] 删除任务"
-        
-        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    
-    elif data == "menu_vip":
-        user_info = await get_user_info(uid)
-        vip_price = await get_vip_price()
-        vip_duration = await get_vip_duration()
-        deposit_address = await get_deposit_address()
-        
-        is_vip = user_info and user_info.get("is_vip")
-        vip_expire = user_info.get("vip_expire_at") if user_info else None
-        
-        if is_vip and vip_expire:
-            expire_date = datetime.fromisoformat(vip_expire).strftime("%Y-%m-%d")
-            status_text = get_message("vip_status_vip", lang, expire_date=expire_date)
-        else:
-            status_text = get_message("vip_status_normal", lang)
-        
-        text = (
-            f"{get_message('vip_title', lang)}\n\n"
-            f"📋 您的状态：\n{status_text}\n\n"
-            f"{get_message('vip_benefits', lang, duration=vip_duration)}\n\n"
-            f"{get_message('vip_price', lang, price=vip_price)}\n\n"
-            f"{get_message('vip_deposit_address', lang, address=deposit_address)}\n\n"
-            f"{get_message('vip_deposit_hint', lang)}"
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton(get_button_text("btn_submit_deposit", lang), callback_data="deposit_submit")],
-            [InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]
-        ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-    
-    elif data == "menu_status":
-        user_info = await get_user_info(uid)
-        
-        if not user_info:
-            await query.edit_message_text(
-                get_message("error_user_not_found", lang),
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")
-                ]])
-            )
-            return
-        
-        is_vip = user_info.get("is_vip")
-        vip_expire = user_info.get("vip_expire_at")
-        created_at = user_info.get("created_at")
-        
-        sub_count = await get_user_sub_count(uid)
-        max_subs = await get_max_subscriptions(uid)
-        subs = await get_user_subs(uid)
-        
-        if is_vip and vip_expire:
-            expire_date = datetime.fromisoformat(vip_expire)
-            days_left = (expire_date - datetime.now()).days
-            status_text = get_message("mystatus_vip", lang,
-                expire_date=expire_date.strftime('%Y-%m-%d'),
-                days_left=days_left
-            )
-        else:
-            status_text = get_message("mystatus_normal", lang)
-        
-        register_date = datetime.fromisoformat(created_at).strftime("%Y-%m-%d") if created_at else "未知"
-        
-        text = (
-            f"{get_message('mystatus_title', lang)}\n\n"
-            f"会员等级：\n{status_text}\n\n"
-            f"{get_message('mystatus_quota', lang, current=sub_count, max=max_subs)}\n"
-            f"{get_message('mystatus_register_date', lang, date=register_date)}\n\n"
-        )
-        
-        if subs:
-            text += f"{get_message('mystatus_monitors_title', lang)}\n"
-            for sub in subs:
-                indicator_name = "BB" if sub["indicator"] == "BB" else "VEGAS"
-                text += f"• {sub['exchange']} {sub['symbol']} ({sub['timeframe']}) - {indicator_name}\n"
-        else:
-            text += f"\n{get_message('mystatus_no_monitors', lang)}"
-        
-        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    
-    elif data == "menu_myid":
-        username = update.effective_user.username or ("未设置" if lang == "zh" else "Not set")
-        text = get_message("myid", lang, uid=uid, username=username)
-        
-        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    
-    elif data == "menu_contact":
-        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]]
-        await query.edit_message_text(
-            get_message("contact_developer", lang),
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    
-    elif data == "menu_language":
-        keyboard = [
-            [InlineKeyboardButton(get_button_text("btn_lang_zh", lang), callback_data="lang_zh")],
-            [InlineKeyboardButton(get_button_text("btn_lang_en", lang), callback_data="lang_en")],
-            [InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]
-        ]
-        await query.edit_message_text(
-            get_message("language_select", lang),
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    
-    elif data == "menu_help":
-        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]]
-        await query.edit_message_text(
-            get_message("help", lang),
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    
-    elif data == "menu_back":
-        await show_main_menu(update, context)
-
-
-async def add_flow_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
-    """
-    处理添加监控流程的回调
-    """
-    query = update.callback_query
-    if not query:
-        return
-    
-    lang = await get_lang(update)
-    uid = update.effective_user.id
-    
-    add_flow = context.user_data.get("add_flow", {})
-    
-    if data.startswith("add_Binance") or data.startswith("add_OKX"):
-        exchange = data.replace("add_", "")
-        context.user_data["add_flow"] = {"step": "symbol", "exchange": exchange}
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("BTC/USDT", callback_data="add_symbol_BTC/USDT"),
-                InlineKeyboardButton("ETH/USDT", callback_data="add_symbol_ETH/USDT"),
-            ],
-            [InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_add")]
-        ]
-        
-        await query.edit_message_text(
-            get_message("exchange_selected", lang, exchange=exchange),
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    
-    elif data.startswith("add_symbol_"):
-        symbol = data.replace("add_symbol_", "")
-        context.user_data["add_flow"]["symbol"] = symbol
-        context.user_data["add_flow"]["step"] = "timeframe"
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("15m", callback_data="add_timeframe_15m"),
-                InlineKeyboardButton("1h", callback_data="add_timeframe_1h"),
-                InlineKeyboardButton("4h", callback_data="add_timeframe_4h"),
-            ]
-        ]
-        
-        await query.edit_message_text(
-            get_message("symbol_selected", lang, symbol=symbol),
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    
-    elif data.startswith("add_timeframe_"):
-        timeframe = data.replace("add_timeframe_", "")
-        context.user_data["add_flow"]["step"] = "indicator"
-        context.user_data["add_flow"]["timeframe"] = timeframe
-        
-        exchange = context.user_data["add_flow"].get("exchange", "")
-        symbol = context.user_data["add_flow"].get("symbol", "")
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("BB 布林带", callback_data="add_BB"),
-                InlineKeyboardButton("VEGAS 通道", callback_data="add_VEGAS"),
-            ],
-            [InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_add")]
-        ]
-        
-        text = (
-            f"✅ 交易对: {symbol}\n"
-            f"✅ 时间周期: {timeframe}\n\n请选择技术指标："
-        )
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    
-    elif data in ["add_BB", "add_VEGAS"]:
-        indicator = data.replace("add_", "")
-        context.user_data["add_flow"]["step"] = "confirm"
-        context.user_data["add_flow"]["indicator"] = indicator
-        
-        exchange = context.user_data["add_flow"].get("exchange", "")
-        symbol = context.user_data["add_flow"].get("symbol", "")
-        timeframe = context.user_data["add_flow"].get("timeframe", "")
-        
-        indicator_name = "BB 布林带" if indicator == "BB" else "VEGAS 通道"
-        
-        text = (
-            f"📋 确认您的监控配置：\n\n"
-            f"• 交易所: {exchange}\n"
-            f"• 交易对: {symbol}\n"
-            f"• 时间周期: {timeframe}\n"
-            f"• 技术指标: {indicator_name}\n\n"
-            f"请确认是否保存？"
-        )
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ 确认", callback_data="add_confirm"),
-                InlineKeyboardButton("❌ 取消", callback_data="add_cancel"),
-            ]
-        ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    
-    elif data == "add_confirm":
-        exchange = context.user_data["add_flow"].get("exchange")
-        symbol = context.user_data["add_flow"].get("symbol")
-        timeframe = context.user_data["add_flow"].get("timeframe")
-        indicator = context.user_data["add_flow"].get("indicator")
-        
-        if not all([exchange, symbol, timeframe, indicator]):
-            await query.edit_message_text(
-                "❌ 数据不完整，请重新开始",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_add")
-                ]])
-            )
-            context.user_data.pop("add_flow", None)
-            return
-        
-        if indicator == "BB":
-            params = {"period": 20, "std_dev": 2}
-            indicator_name = "BB 布林带"
-        else:
-            params = {"ema_fast": 144, "ema_slow": 169}
-            indicator_name = "VEGAS 通道"
-        
-        try:
-            sub_id = await add_subscription(
-                uid=uid,
-                exchange=exchange,
-                symbol=symbol,
-                timeframe=timeframe,
-                indicator=indicator,
-                params=params
-            )
-            
-            current_price = None
-            try:
-                import ccxt.async_support as ccxt
-                exchange_inst = getattr(ccxt, exchange.lower())({"enableRateLimit": True})
-                ticker = await exchange_inst.fetch_ticker(symbol)
-                await exchange_inst.close()
-                current_price = ticker.get("last") or ticker.get("close")
-            except Exception as e:
-                logger.warning(f"获取价格失败: {e}")
-            
-            if current_price:
-                text = get_message("confirm_saved_with_price", lang,
-                    price=f"{current_price:.6f}".rstrip('0').rstrip('.'),
-                    exchange=exchange,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    indicator=indicator_name
-                )
-            else:
-                text = get_message("confirm_saved_no_price", lang,
-                    exchange=exchange,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    indicator=indicator_name
-                )
-            
-            keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_back")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            
-        except Exception as e:
-            logger.error(f"保存订阅失败: {e}")
-            await query.edit_message_text(
-                "❌ 保存失败，请重试",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="menu_add")
-                ]])
-            )
-        
-        context.user_data.pop("add_flow", None)
-    
-    elif data == "add_cancel":
-        context.user_data.pop("add_flow", None)
-        await show_main_menu(update, context)
-
-
 async def exchange_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    State 1: 处理交易所选择
-    """
+    """处理交易所选择"""
     try:
         query = update.callback_query
         if not query:
             return ConversationHandler.END
-        
         await query.answer()
-        
         exchange = query.data
         context.user_data["exchange"] = exchange
-        
         lang = await get_lang(update)
-        await safe_edit(
-            update,
-            get_message("exchange_selected", lang, exchange=exchange)
-        )
-        
+        await safe_edit(update, get_message("exchange_selected", lang, exchange=exchange))
         return SYMBOL
-        
     except Exception as e:
         logger.error(f"exchange_callback 异常: {e}")
         return ConversationHandler.END
 
 
 async def symbol_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    State 2: 处理交易对输入
-    """
+    """处理交易对输入"""
     try:
         if not update.message:
             return ConversationHandler.END
-        
         lang = await get_lang(update)
         symbol = update.message.text.strip().upper()
-        
         if not symbol or "/" not in symbol or len(symbol) > 20:
             await update.message.reply_text(get_message("symbol_format_error", lang))
             return SYMBOL
-        
         parts = symbol.split("/")
-        if len(parts) != 2:
+        if len(parts) != 2 or not parts[0] or not parts[1]:
             await update.message.reply_text(get_message("symbol_format_error", lang))
             return SYMBOL
-        
-        base, quote = parts
-        if not base or not quote:
-            await update.message.reply_text(get_message("symbol_format_error", lang))
-            return SYMBOL
-        
-        valid_quotes = {"USDT", "USDC", "BUSD", "USD"}
-        if quote not in valid_quotes:
-            await update.message.reply_text(
-                get_message("symbol_quote_warning", lang, quote=quote, valid_quotes=', '.join(valid_quotes))
-            )
-        
         supported_symbols = await get_supported_symbols()
-        
         if supported_symbols and symbol not in supported_symbols:
-            popular_symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "DOGE/USDT", 
-                             "ADA/USDT", "AVAX/USDT", "DOT/USDT", "MATIC/USDT", "LINK/USDT"]
-            available = [s for s in popular_symbols if s in supported_symbols][:10]
-            symbols_str = "\n".join(available) if available else "BTC/USDT, ETH/USDT, SOL/USDT"
-            
-            await update.message.reply_text(
-                get_message("symbol_not_supported", lang, symbols=symbols_str)
-            )
+            popular = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "DOGE/USDT", "ADA/USDT", "AVAX/USDT", "DOT/USDT", "MATIC/USDT", "LINK/USDT"]
+            available = [s for s in popular if s in supported_symbols][:10]
+            await update.message.reply_text(get_message("symbol_not_supported", lang, symbols="\n".join(available)))
             return SYMBOL
-        
         context.user_data["symbol"] = symbol
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("15m", callback_data="15m"),
-                InlineKeyboardButton("1h", callback_data="1h"),
-                InlineKeyboardButton("4h", callback_data="4h"),
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            get_message("symbol_selected", lang, symbol=symbol),
-            reply_markup=reply_markup
-        )
-        
+        keyboard = [[InlineKeyboardButton("15m", callback_data="15m"), InlineKeyboardButton("1h", callback_data="1h"), InlineKeyboardButton("4h", callback_data="4h")]]
+        await update.message.reply_text(get_message("symbol_selected", lang, symbol=symbol), reply_markup=InlineKeyboardMarkup(keyboard))
         return TIMEFRAME
-        
     except Exception as e:
         logger.error(f"symbol_received 异常: {e}")
         return ConversationHandler.END
 
 
 async def timeframe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    State 3: 处理时间周期选择
-    """
+    """处理时间周期选择"""
     try:
         query = update.callback_query
         if not query:
             return ConversationHandler.END
-        
         await query.answer()
-        
         timeframe = query.data
         context.user_data["timeframe"] = timeframe
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("BB 布林带", callback_data="BB"),
-                InlineKeyboardButton("VEGAS 通道", callback_data="VEGAS"),
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await safe_edit(
-            update,
-            f"✅ 交易对: {context.user_data.get('symbol', 'N/A')}\n"
-            f"✅ 时间周期: {timeframe}\n\n请选择技术指标：",
-            reply_markup=reply_markup
-        )
-        
+        keyboard = [[InlineKeyboardButton(get_message("indicator_bb", await get_lang(update)), callback_data="BB"), InlineKeyboardButton(get_message("indicator_vegas", await get_lang(update)), callback_data="VEGAS")]]
+        symbol = context.user_data.get("symbol", "")
+        await safe_edit(update, get_message("timeframe_selected", await get_lang(update), symbol=symbol, timeframe=timeframe), reply_markup=InlineKeyboardMarkup(keyboard))
         return INDICATOR
-        
     except Exception as e:
         logger.error(f"timeframe_callback 异常: {e}")
         return ConversationHandler.END
 
 
 async def indicator_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    State 4: 处理指标选择，显示确认
-    """
+    """处理指标选择"""
     try:
         query = update.callback_query
         if not query:
             return ConversationHandler.END
-        
         await query.answer()
-        
         indicator = query.data
         context.user_data["indicator"] = indicator
-        
-        exchange = context.user_data.get("exchange", "N/A")
-        symbol = context.user_data.get("symbol", "N/A")
-        timeframe = context.user_data.get("timeframe", "N/A")
-        
-        indicator_name = "BB 布林带" if indicator == "BB" else "VEGAS 通道"
-        
-        confirm_text = (
-            f"📋 确认您的监控配置：\n\n"
-            f"• 交易所: {exchange}\n"
-            f"• 交易对: {symbol}\n"
-            f"• 时间周期: {timeframe}\n"
-            f"• 技术指标: {indicator_name}\n\n"
-            "请确认是否保存？"
-        )
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ 确认", callback_data="confirm"),
-                InlineKeyboardButton("❌ 取消", callback_data="cancel"),
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await safe_edit(update, confirm_text, reply_markup=reply_markup)
-        
+        lang = await get_lang(update)
+        text = get_message("indicator_selected", lang, exchange=context.user_data.get("exchange", ""), symbol=context.user_data.get("symbol", ""), timeframe=context.user_data.get("timeframe", ""), indicator=indicator)
+        keyboard = [[InlineKeyboardButton(get_button_text("btn_confirm", lang), callback_data="confirm"), InlineKeyboardButton(get_button_text("btn_cancel", lang), callback_data="cancel")]]
+        await safe_edit(update, text, reply_markup=InlineKeyboardMarkup(keyboard))
         return CONFIRM
-        
     except Exception as e:
         logger.error(f"indicator_callback 异常: {e}")
         return ConversationHandler.END
 
 
 async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    State 5: 处理确认，保存到数据库
-    """
+    """处理确认"""
     try:
         query = update.callback_query
         if not query:
             return ConversationHandler.END
-        
         await query.answer()
-        
-        if query.data == "cancel":
-            await safe_edit(update, "❌ 已取消操作")
-            return ConversationHandler.END
-        
-        if not update.effective_user:
-            return ConversationHandler.END
-        
-        uid = update.effective_user.id
         lang = await get_lang(update)
+        if query.data == "cancel":
+            await safe_edit(update, get_message("confirm_cancelled", lang))
+            return ConversationHandler.END
+        uid = update.effective_user.id
         exchange = context.user_data.get("exchange")
         symbol = context.user_data.get("symbol")
         timeframe = context.user_data.get("timeframe")
         indicator = context.user_data.get("indicator")
-        
         if not all([exchange, symbol, timeframe, indicator]):
             await safe_edit(update, get_message("data_incomplete", lang))
             return ConversationHandler.END
-        
-        if indicator == "BB":
-            params = {"period": 20, "std_dev": 2}
-            indicator_name = "BB 布林带"
-        else:
-            params = {"ema_fast": 144, "ema_slow": 169}
-            indicator_name = "VEGAS 通道"
-        
-        try:
-            sub_id = await add_subscription(
-                uid=uid,
-                exchange=exchange,
-                symbol=symbol,
-                timeframe=timeframe,
-                indicator=indicator,
-                params=params
-            )
-            
-            current_price = None
-            try:
-                import ccxt.async_support as ccxt
-                exchange_inst = getattr(ccxt, exchange.lower())({"enableRateLimit": True})
-                ticker = await exchange_inst.fetch_ticker(symbol)
-                await exchange_inst.close()
-                current_price = ticker.get("last") or ticker.get("close")
-            except Exception as e:
-                logger.warning(f"获取价格失败: {e}")
-            
-            if current_price:
-                await safe_edit(
-                    update,
-                    get_message("confirm_saved_with_price", lang,
-                        price=f"{current_price:.6f}".rstrip('0').rstrip('.'),
-                        exchange=exchange,
-                        symbol=symbol,
-                        timeframe=timeframe,
-                        indicator=indicator_name
-                    )
-                )
-            else:
-                await safe_edit(
-                    update,
-                    get_message("confirm_saved_no_price", lang,
-                        exchange=exchange,
-                        symbol=symbol,
-                        timeframe=timeframe,
-                        indicator=indicator_name
-                    )
-                )
-        except Exception as db_error:
-            logger.error(f"保存订阅失败: {db_error}")
-            await safe_edit(update, get_message("save_failed", lang))
-        
+        sub_id = await add_subscription(uid, exchange, symbol, timeframe, indicator)
+        await safe_edit(update, get_message("confirm_saved", lang, sub_id=sub_id, exchange=exchange, symbol=symbol, timeframe=timeframe, indicator=indicator))
         return ConversationHandler.END
-        
     except Exception as e:
         logger.error(f"confirm_callback 异常: {e}")
         return ConversationHandler.END
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    取消对话
-    """
-    await safe_reply(update, "❌ 操作已取消")
+    """取消对话"""
+    lang = await get_lang(update)
+    await safe_reply(update, get_message("cancel", lang))
     return ConversationHandler.END
 
 
 async def list_subs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /list 命令：查看当前用户的订阅列表
-    """
+    """/list 命令"""
     try:
         if not update.effective_user:
             return
-        
+        lang = await get_lang(update)
         uid = update.effective_user.id
         subs = await get_user_subs(uid)
-        
         if not subs:
-            await safe_reply(update, "📭 您当前没有任何监控任务\n\n发送 /start 添加新监控")
+            await safe_reply(update, get_message("no_subs", lang))
             return
-        
-        text = "📋 您的监控任务列表：\n\n"
+        text = get_message("subs_list", lang)
         for sub in subs:
             status = "✅" if sub["is_active"] else "❌"
-            text += (
-                f"{status} #{sub['sub_id']} {sub['exchange']} {sub['symbol']}\n"
-                f"   周期: {sub['timeframe']} | 指标: {sub['indicator']}\n\n"
-            )
-        
-        text += "💡 使用 /delete [编号] 删除任务"
+            text += f"{status} #{sub['sub_id']} {sub['exchange']} {sub['symbol']}\n   周期: {sub['timeframe']} | 指标: {sub['indicator']}\n\n"
+        text += get_message("subs_list_footer", lang)
         await safe_reply(update, text)
-        
     except Exception as e:
         logger.error(f"list_subs 异常: {e}")
-        await safe_reply(update, "❌ 查询失败，请重试")
 
 
 async def delete_sub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /delete 命令：删除指定订阅
-    用法：/delete 123
-    """
+    """/delete 命令"""
     try:
         if not update.effective_user:
             return
-        
+        lang = await get_lang(update)
         if not context.args:
-            await safe_reply(update, "❌ 请指定要删除的任务编号\n\n用法：/delete 123")
+            await safe_reply(update, get_message("delete_invalid_id", lang))
             return
-        
         try:
             sub_id = int(context.args[0])
         except ValueError:
-            await safe_reply(update, "❌ 编号必须是数字\n\n用法：/delete 123")
+            await safe_reply(update, get_message("delete_not_number", lang))
             return
-        
         uid = update.effective_user.id
-        
-        # 验证该任务是否属于当前用户
         user_subs = await get_user_subs(uid)
         valid_ids = [s["sub_id"] for s in user_subs]
-        
         if sub_id not in valid_ids:
-            await safe_reply(update, "❌ 无法删除：该任务不存在或不属于您")
+            await safe_reply(update, get_message("delete_not_found", lang))
             return
-        
-        # 执行删除
         success = await delete_subscription(sub_id, uid)
-        
         if success:
-            await safe_reply(update, f"✅ 已删除监控任务 #{sub_id}")
+            await safe_reply(update, get_message("delete_success", lang, sub_id=sub_id))
         else:
-            await safe_reply(update, "❌ 删除失败，请重试")
-            
+            await safe_reply(update, get_message("delete_failed", lang))
     except Exception as e:
         logger.error(f"delete_sub 异常: {e}")
-        await safe_reply(update, "❌ 操作失败，请重试")
 
 
 async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /myid 命令：查看自己的用户 ID
-    """
+    """/myid 命令"""
     if not update.effective_user:
         return
-    
     lang = await get_lang(update)
     uid = update.effective_user.id
     username = update.effective_user.username or ("未设置" if lang == "zh" else "Not set")
-    
-    await safe_reply(
-        update,
-        get_message("myid", lang, uid=uid, username=username)
-    )
+    await safe_reply(update, get_message("myid", lang, uid=uid, username=username))
 
 
-async def vip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /vip 命令：查看 VIP 说明和充值
-    """
+async def donate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/donate 命令 - 显示打赏地址"""
     if not update.effective_user:
         return
-    
     lang = await get_lang(update)
-    uid = update.effective_user.id
-    user_info = await get_user_info(uid)
-    
-    vip_price = await get_vip_price()
-    vip_duration = await get_vip_duration()
-    deposit_address = await get_deposit_address()
-    
-    is_vip = user_info and user_info.get("is_vip")
-    vip_expire = user_info.get("vip_expire_at") if user_info else None
-    
-    if is_vip and vip_expire:
-        expire_date = datetime.fromisoformat(vip_expire).strftime("%Y-%m-%d")
-        status_text = get_message("vip_status_vip", lang, expire_date=expire_date)
-    else:
-        status_text = get_message("vip_status_normal", lang)
-    
-    text = (
-        f"{get_message('vip_title', lang)}\n\n"
-        f"📋 您的状态：\n{status_text}\n\n"
-        f"{get_message('vip_benefits', lang, duration=vip_duration)}\n\n"
-        f"{get_message('vip_price', lang, price=vip_price)}\n\n"
-        f"{get_message('vip_deposit_address', lang, address=deposit_address)}\n\n"
-        f"{get_message('vip_deposit_hint', lang)}"
-    )
-    
-    keyboard = [
-        [InlineKeyboardButton(get_button_text("btn_submit_deposit", lang), callback_data="deposit_submit")],
-        [InlineKeyboardButton(get_button_text("btn_vip_status", lang), callback_data="vip_status")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await safe_reply(update, text, reply_markup, parse_mode="HTML")
-
-
-async def mystatus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /mystatus 命令：查看自己的 VIP 状态
-    """
-    if not update.effective_user:
-        return
-    
-    lang = await get_lang(update)
-    uid = update.effective_user.id
-    user_info = await get_user_info(uid)
-    
-    if not user_info:
-        await safe_reply(update, get_message("error_user_not_found", lang))
-        return
-    
-    is_vip = user_info.get("is_vip")
-    vip_expire = user_info.get("vip_expire_at")
-    created_at = user_info.get("created_at")
-    
-    sub_count = await get_user_sub_count(uid)
-    max_subs = await get_max_subscriptions(uid)
-    
-    if is_vip and vip_expire:
-        expire_date = datetime.fromisoformat(vip_expire)
-        days_left = (expire_date - datetime.now()).days
-        status_text = get_message("mystatus_vip", lang, 
-            expire_date=expire_date.strftime('%Y-%m-%d'), 
-            days_left=days_left
-        )
-    else:
-        status_text = get_message("mystatus_normal", lang)
-    
-    register_date = datetime.fromisoformat(created_at).strftime("%Y-%m-%d") if created_at else ("未知" if lang == "zh" else "Unknown")
-    
-    text = (
-        f"{get_message('mystatus_title', lang)}\n\n"
-        f"会员等级：\n{status_text}\n\n"
-        f"{get_message('mystatus_quota', lang, current=sub_count, max=max_subs)}\n"
-        f"{get_message('mystatus_register_date', lang, date=register_date)}"
-    )
-    
-    keyboard = []
-    if not is_vip:
-        keyboard.append([InlineKeyboardButton(get_button_text("btn_open_vip", lang), callback_data="open_vip")])
-    keyboard.append([InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="back_main")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-    await safe_reply(update, text, reply_markup)
-
-
-async def deposit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /deposit 命令：提交充值申请
-    用法：/deposit 交易哈希
-    """
-    if not update.effective_user:
-        return
-    
-    lang = await get_lang(update)
-    uid = update.effective_user.id
-    username = update.effective_user.username or "未设置"
-    
-    if not context.args:
-        await safe_reply(update, get_message("deposit_missing_hash", lang))
-        return
-    
-    tx_hash = context.args[0].strip()
-    
-    if len(tx_hash) < 10:
-        await safe_reply(update, get_message("deposit_hash_too_short", lang))
-        return
-    
-    if not all(c in '0123456789abcdefABCDEF' for c in tx_hash):
-        await safe_reply(update, "❌ 交易哈希格式错误，请输入正确的 TRC20 交易哈希")
-        return
-    
-    payment_id = await create_payment_request(uid, tx_hash)
-    
-    await safe_reply(
-        update,
-        get_message("deposit_user_notice", lang, tx_hash=tx_hash, payment_id=payment_id)
-    )
-    
-    # 通知管理员
-    if ADMIN_UID:
-        try:
-            bot = context.bot
-            admin_text = (
-                f"💰 新的充值申请\n\n"
-                f"📝 申请编号：#{payment_id}\n"
-                f"👤 用户 UID：{uid}\n"
-                f"📱 用户名：@{username}\n"
-                f"🔗 交易哈希：{tx_hash}\n\n"
-                f"请及时处理！"
-            )
-            keyboard = [
-                [InlineKeyboardButton("✅ 批准", callback_data=f"admin_approve_{payment_id}")],
-                [InlineKeyboardButton("❌ 拒绝", callback_data=f"admin_reject_{payment_id}")],
-            ]
-            await bot.send_message(
-                chat_id=ADMIN_UID, 
-                text=admin_text, 
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        except Exception as e:
-            logger.error(f"通知管理员失败: {e}")
-
-
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    处理按钮回调
-    """
-    query = update.callback_query
-    if not query:
-        return
-    
-    await query.answer()
-    
-    uid = update.effective_user.id
-    data = query.data
-    lang = await get_lang(update)
-    
-    if data.startswith("menu_"):
-        await menu_callback(update, context, data)
-        return
-    
-    if data.startswith("add_"):
-        await add_flow_callback(update, context, data)
-        return
-    
-    if data == "deposit_submit":
-        await query.edit_message_text(get_message("deposit_hint", lang))
-    
-    elif data == "vip_status":
-        user_info = await get_user_info(uid)
-        if not user_info:
-            await query.edit_message_text(get_message("error_user_not_found", lang))
-            return
-        
-        is_vip = user_info.get("is_vip")
-        vip_expire = user_info.get("vip_expire_at")
-        sub_count = await get_user_sub_count(uid)
-        max_subs = await get_max_subscriptions(uid)
-        
-        if is_vip and vip_expire:
-            expire_date = datetime.fromisoformat(vip_expire)
-            days_left = (expire_date - datetime.now()).days
-            status_text = get_message("mystatus_vip", lang,
-                expire_date=expire_date.strftime('%Y-%m-%d'),
-                days_left=days_left
-            )
-        else:
-            status_text = get_message("vip_status_normal", lang)
-        
-        text = (
-            f"{get_message('mystatus_title', lang)}\n\n"
-            f"{status_text}\n\n"
-            f"{get_message('mystatus_quota', lang, current=sub_count, max=max_subs)}"
-        )
-        
-        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="back_vip")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    
-    elif data == "open_vip":
-        vip_price = await get_vip_price()
-        vip_duration = await get_vip_duration()
-        deposit_address = await get_deposit_address()
-        
-        text = (
-            f"{get_message('open_vip_title', lang)}\n\n"
-            f"{get_message('open_vip_price', lang, price=vip_price, duration=vip_duration)}\n\n"
-            f"{get_message('vip_deposit_address', lang, address=deposit_address)}\n\n"
-            f"{get_message('vip_deposit_hint', lang)}"
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton(get_button_text("btn_submit_deposit", lang), callback_data="deposit_submit")],
-            [InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="back_main")]
-        ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-    
-    elif data == "back_vip":
-        await vip(update, context)
-    
-    elif data == "back_main":
-        await show_main_menu(update, context)
-    
-    elif data.startswith("lang_"):
-        new_lang = data.split("_")[-1]
-        await set_user_language(uid, new_lang)
-        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", new_lang), callback_data="menu_back")]]
-        await query.edit_message_text(
-            get_message("language_changed", new_lang),
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+    text = get_message("donate_content", lang, address=DONATE_ADDRESS)
+    await safe_reply(update, text)
 
 
 async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /language 命令：切换语言
-    """
+    """/language 命令 - 切换语言"""
     lang = await get_lang(update)
-    
-    keyboard = [
-        [InlineKeyboardButton(get_button_text("btn_lang_zh", lang), callback_data="lang_zh")],
-        [InlineKeyboardButton(get_button_text("btn_lang_en", lang), callback_data="lang_en")],
-    ]
-    
-    await safe_reply(
-        update,
-        get_message("language_select", lang),
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    keyboard = [[InlineKeyboardButton(get_button_text("btn_lang_zh", lang), callback_data="lang_zh")], [InlineKeyboardButton(get_button_text("btn_lang_en", lang), callback_data="lang_en")]]
+    await safe_reply(update, get_message("language_select", lang), reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /admin 命令：管理员面板
-    """
-    if not update.effective_user:
-        return
-    
-    uid = update.effective_user.id
-    
-    if uid != ADMIN_UID:
-        await safe_reply(update, "❌ 您没有权限访问管理员面板")
-        return
-    
-    total_users = await get_all_users_count()
-    vip_users = await get_vip_users_count()
-    pending_payments = len(await get_pending_payments())
-    
-    text = (
-        f"🔧 管理员控制面板\n\n"
-        f"📊 统计：\n"
-        f"• 总用户：{total_users}\n"
-        f"• VIP 用户：{vip_users}\n"
-        f"• 待处理充值：{pending_payments}\n"
-    )
-    
-    keyboard = [
-        [InlineKeyboardButton("💰 充值申请列表", callback_data="admin_payments")],
-        [InlineKeyboardButton("👥 VIP 用户列表", callback_data="admin_vip_list")],
-        [InlineKeyboardButton("📢 群发消息", callback_data="admin_broadcast")],
-        [InlineKeyboardButton("📊 统计信息", callback_data="admin_stats")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await safe_reply(update, text, reply_markup)
-
-
-async def admin_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    处理管理员按钮回调
-    """
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理按钮回调"""
     query = update.callback_query
     if not query:
         return
-    
+    await query.answer()
     uid = update.effective_user.id
-    
+    data = query.data
+    if data.startswith("lang_"):
+        new_lang = data.split("_")[-1]
+        await set_user_language(uid, new_lang)
+        await query.edit_message_text(get_message("language_changed", new_lang))
+
+
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/admin 命令 - 管理员面板"""
+    if not update.effective_user:
+        return
+    uid = update.effective_user.id
+    if uid != ADMIN_UID:
+        lang = await get_lang(update)
+        await safe_reply(update, get_message("admin_no_permission", lang))
+        return
+    lang = await get_lang(update)
+    total_users = await get_all_users_count()
+    text = get_message("admin_panel", lang, total=total_users)
+    keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_broadcast", lang), callback_data="admin_broadcast")], [InlineKeyboardButton(get_button_text("admin_btn_stats", lang), callback_data="admin_stats")], [InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="admin_back")]]
+    await safe_reply(update, text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def admin_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理管理员按钮"""
+    query = update.callback_query
+    if not query:
+        return
+    uid = update.effective_user.id
     if uid != ADMIN_UID:
         await query.answer("❌ 无权限", show_alert=True)
         return
-    
     await query.answer()
     data = query.data
+    lang = await get_lang(update)
     
-    if data == "admin_payments":
-        payments = await get_pending_payments()
-        
-        if not payments:
-            await query.edit_message_text(
-                "💰 充值申请列表\n\n暂无待处理的申请",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ 返回", callback_data="admin_back")]])
-            )
-            return
-        
-        text = f"💰 充值申请列表\n\n共 {len(payments)} 条待处理：\n\n"
-        
-        keyboard = []
-        for i, p in enumerate(payments[:5]):
-            username = f"UID: {p['uid']}"
-            time_str = datetime.fromisoformat(p['created_at']).strftime("%m-%d %H:%M")
-            text += f"#{i+1} {username} {time_str}\n"
-            keyboard.append([InlineKeyboardButton(
-                f"处理 #{i+1} (UID:{p['uid']})", 
-                callback_data=f"admin_payment_{p['payment_id']}"
-            )])
-        
-        keyboard.append([InlineKeyboardButton("⬅️ 返回", callback_data="admin_back")])
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    
-    elif data.startswith("admin_payment_"):
-        payment_id = int(data.split("_")[-1])
-        payment = await get_payment(payment_id)
-        
-        if not payment:
-            await query.answer("申请不存在", show_alert=True)
-            return
-        
-        created_at = datetime.fromisoformat(payment['created_at']).strftime("%Y-%m-%d %H:%M:%S")
-        
-        text = (
-            f"💰 充值申请详情\n\n"
-            f"申请编号：#{payment_id}\n"
-            f"用户 UID：{payment['uid']}\n"
-            f"交易哈希：{payment['tx_hash']}\n"
-            f"申请时间：{created_at}\n"
-            f"状态：{payment['status']}"
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton("✅ 确认开通", callback_data=f"admin_approve_{payment_id}")],
-            [InlineKeyboardButton("❌ 拒绝申请", callback_data=f"admin_reject_{payment_id}")],
-            [InlineKeyboardButton("⬅️ 返回", callback_data="admin_payments")]
-        ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    
-    elif data.startswith("admin_approve_"):
-        payment_id = int(data.split("_")[-1])
-        success = await approve_payment(payment_id, uid)
-        
-        if success:
-            await query.edit_message_text(
-                f"✅ 已批准申请 #{payment_id}，VIP 已开通",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ 返回", callback_data="admin_payments")]])
-            )
-        else:
-            await query.answer("操作失败", show_alert=True)
-    
-    elif data.startswith("admin_reject_"):
-        payment_id = int(data.split("_")[-1])
-        success = await reject_payment(payment_id, uid)
-        
-        if success:
-            await query.edit_message_text(
-                f"❌ 已拒绝申请 #{payment_id}",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ 返回", callback_data="admin_payments")]])
-            )
-        else:
-            await query.answer("操作失败", show_alert=True)
-    
-    elif data == "admin_vip_list":
-        vip_users = await get_vip_users()
-        
-        if not vip_users:
-            await query.edit_message_text(
-                "👥 VIP 用户列表\n\n暂无 VIP 用户",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ 返回", callback_data="admin_back")]])
-            )
-            return
-        
-        text = f"👥 VIP 用户列表\n\n共 {len(vip_users)} 位 VIP：\n\n"
-        
-        for u in vip_users[:20]:
-            expire = datetime.fromisoformat(u['vip_expire_at']).strftime("%Y-%m-%d")
-            text += f"UID: {u['uid']} 到期: {expire}\n"
-        
-        keyboard = [[InlineKeyboardButton("⬅️ 返回", callback_data="admin_back")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    
-    elif data == "admin_broadcast":
+    if data == "admin_broadcast":
         context.user_data['broadcast_mode'] = True
-        
-        await query.edit_message_text(
-            "📢 群发消息\n\n"
-            "请发送要群发的消息内容：",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ 取消", callback_data="admin_back")]])
-        )
-    
-    elif data == "admin_broadcast_confirm":
-        message = context.user_data.get('broadcast_message', '')
-        target = context.user_data.get('broadcast_target', 'all')
-        
-        if target == 'all':
-            users = await get_all_users()
-        else:
-            vip_list = await get_vip_users()
-            users = [u['uid'] for u in vip_list]
-        
-        await query.edit_message_text(f"📤 正在发送给 {len(users)} 位用户...")
-        
-        success_count = 0
-        for user_uid in users:
-            try:
-                await context.bot.send_message(chat_id=user_uid, text=message)
-                success_count += 1
-                await asyncio.sleep(0.1)
-            except Exception as e:
-                logger.error(f"发送失败 UID:{user_uid}: {e}")
-        
-        await query.edit_message_text(
-            f"✅ 群发完成\n\n成功发送：{success_count}/{len(users)}",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ 返回", callback_data="admin_back")]])
-        )
+        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="admin_back")]]
+        await query.edit_message_text(get_message("admin_broadcast_input", lang), reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif data == "admin_stats":
         total_users = await get_all_users_count()
-        vip_users = await get_vip_users_count()
-        pending = len(await get_pending_payments())
-        
-        text = (
-            f"📊 统计信息\n\n"
-            f"• 总用户：{total_users}\n"
-            f"• VIP 用户：{vip_users}\n"
-            f"• 待处理充值：{pending}"
-        )
-        
-        keyboard = [[InlineKeyboardButton("⬅️ 返回", callback_data="admin_back")]]
+        text = get_message("admin_stats", lang, total=total_users)
+        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="admin_back")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif data == "admin_back":
         total_users = await get_all_users_count()
-        vip_users = await get_vip_users_count()
-        pending_payments = len(await get_pending_payments())
-        
-        text = (
-            f"🔧 管理员控制面板\n\n"
-            f"📊 统计：\n"
-            f"• 总用户：{total_users}\n"
-            f"• VIP 用户：{vip_users}\n"
-            f"• 待处理充值：{pending_payments}\n"
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton("💰 充值申请列表", callback_data="admin_payments")],
-            [InlineKeyboardButton("👥 VIP 用户列表", callback_data="admin_vip_list")],
-            [InlineKeyboardButton("📢 群发消息", callback_data="admin_broadcast")],
-            [InlineKeyboardButton("📊 统计信息", callback_data="admin_stats")]
-        ]
+        text = get_message("admin_panel", lang, total=total_users)
+        keyboard = [[InlineKeyboardButton(get_button_text("admin_btn_broadcast", lang), callback_data="admin_broadcast")], [InlineKeyboardButton(get_button_text("admin_btn_stats", lang), callback_data="admin_stats")], [InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="admin_back")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def broadcast_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    处理群发消息输入
-    """
+    """处理群发消息输入"""
     if not context.user_data.get('broadcast_mode'):
         return
-    
     if not update.effective_user or update.effective_user.id != ADMIN_UID:
         return
-    
     if not update.message or not update.message.text:
         return
-    
+    lang = await get_lang(update)
     message = update.message.text
     context.user_data['broadcast_message'] = message
     context.user_data['broadcast_mode'] = False
-    
-    keyboard = [
-        [InlineKeyboardButton("👥 发送给所有用户", callback_data="admin_broadcast_confirm")],
-        [InlineKeyboardButton("💎 仅VIP用户", callback_data="admin_broadcast_vip")],
-        [InlineKeyboardButton("❌ 取消", callback_data="admin_back")]
-    ]
-    
-    await update.message.reply_text(
-        f"📢 确认发送以下消息：\n\n{message[:200]}{'...' if len(message) > 200 else ''}",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    处理文本消息
-    """
-    if not update.message or not update.message.text:
-        return
-    
-    if not update.effective_user:
-        return
-    
-    uid = update.effective_user.id
-    
-    add_flow = context.user_data.get("add_flow", {})
-    
-    if add_flow.get("step") == "symbol":
-        lang = await get_lang(update)
-        symbol = update.message.text.strip().upper()
-        
-        if not symbol or "/" not in symbol or len(symbol) > 20:
-            await update.message.reply_text(get_message("symbol_format_error", lang))
-            return
-        
-        parts = symbol.split("/")
-        if len(parts) != 2 or not parts[0] or not parts[1]:
-            await update.message.reply_text(get_message("symbol_format_error", lang))
-            return
-        
-        supported_symbols = await get_supported_symbols()
-        
-        if supported_symbols and symbol not in supported_symbols:
-            popular_symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "DOGE/USDT", 
-                             "ADA/USDT", "AVAX/USDT", "DOT/USDT", "MATIC/USDT", "LINK/USDT"]
-            available = [s for s in popular_symbols if s in supported_symbols][:10]
-            symbols_str = "\n".join(available) if available else "BTC/USDT, ETH/USDT, SOL/USDT"
-            
-            await update.message.reply_text(
-                get_message("symbol_not_supported", lang, symbols=symbols_str)
-            )
-            return
-        
-        context.user_data["add_flow"]["symbol"] = symbol
-        context.user_data["add_flow"]["step"] = "timeframe"
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("15m", callback_data="add_timeframe_15m"),
-                InlineKeyboardButton("1h", callback_data="add_timeframe_1h"),
-                InlineKeyboardButton("4h", callback_data="add_timeframe_4h"),
-            ]
-        ]
-        
-        await update.message.reply_text(
-            get_message("symbol_selected", lang, symbol=symbol),
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return
-    
-    if context.user_data.get('broadcast_mode'):
-        await broadcast_message_handler(update, context)
-        return
-    
-    lang = await get_lang(update)
-    await update.message.reply_text(get_message("help", lang))
-
-
-async def setvip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /setvip 命令：手动开通 VIP
-    用法：/setvip UID 天数
-    """
-    if not update.effective_user or update.effective_user.id != ADMIN_UID:
-        await safe_reply(update, "❌ 您没有权限执行此命令")
-        return
-    
-    if not context.args or len(context.args) < 2:
-        await safe_reply(update, "❌ 用法：/setvip UID 天数\n示例：/setvip 123456 365")
-        return
-    
-    try:
-        target_uid = int(context.args[0])
-        days = int(context.args[1])
-        
-        if days <= 0 or days > 3650:
-            await safe_reply(update, "❌ 天数必须在 1-3650 之间")
-            return
-    except ValueError:
-        await safe_reply(update, "❌ 参数格式错误")
-        return
-    
-    from db_manager import set_user_vip
-    success = await set_user_vip(target_uid, days)
-    
-    if success:
-        await safe_reply(update, f"✅ 已为用户 {target_uid} 开通 VIP {days} 天")
-    else:
-        await safe_reply(update, "❌ 开通失败")
+    keyboard = [[InlineKeyboardButton(get_button_text("btn_broadcast_all", lang), callback_data="admin_broadcast_confirm")], [InlineKeyboardButton(get_button_text("admin_btn_back", lang), callback_data="admin_back")]]
+    await update.message.reply_text(get_message("admin_broadcast_confirm", lang, message=message[:200]), reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 def main() -> None:
-    """
-    启动 Bot
-    """
+    """启动 Bot"""
     TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    
     if not TOKEN:
-        print("❌ 错误: 未设置 TELEGRAM_BOT_TOKEN 环境变量")
-        print("   请设置: export TELEGRAM_BOT_TOKEN='your_token_here'")
-        print("   或创建 .env 文件: TELEGRAM_BOT_TOKEN=your_token_here")
+        print("❌ 错误: 未设置 TELEGRAM_BOT_TOKEN")
         return
     
     application = Application.builder().token(TOKEN).build()
@@ -1577,72 +423,34 @@ def main() -> None:
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            EXCHANGE: [
-                CallbackQueryHandler(exchange_callback, pattern="^(Binance|OKX)$")
-            ],
-            SYMBOL: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, symbol_received)
-            ],
-            TIMEFRAME: [
-                CallbackQueryHandler(timeframe_callback, pattern="^(15m|1h|4h)$")
-            ],
-            INDICATOR: [
-                CallbackQueryHandler(indicator_callback, pattern="^(BB|VEGAS)$")
-            ],
-            CONFIRM: [
-                CallbackQueryHandler(confirm_callback, pattern="^(confirm|cancel)$")
-            ],
+            EXCHANGE: [CallbackQueryHandler(exchange_callback, pattern="^(Binance|OKX)$")],
+            SYMBOL: [MessageHandler(filters.TEXT & ~filters.COMMAND, symbol_received)],
+            TIMEFRAME: [CallbackQueryHandler(timeframe_callback, pattern="^(15m|1h|4h)$")],
+            INDICATOR: [CallbackQueryHandler(indicator_callback, pattern="^(BB|VEGAS)$")],
+            CONFIRM: [CallbackQueryHandler(confirm_callback, pattern="^(confirm|cancel)$")],
         },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            CommandHandler("start", start),
-        ],
+        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
         conversation_timeout=CONVERSATION_TIMEOUT,
-        name="subscription_conversation",
-        persistent=False,
     )
     
     application.add_handler(conv_handler)
-    
-    application.add_handler(CallbackQueryHandler(button_callback, pattern="^(deposit_submit|vip_status|open_vip|back_vip|back_main|lang_|menu_|add_)"))
+    application.add_handler(CallbackQueryHandler(button_callback, pattern="^lang_"))
     application.add_handler(CallbackQueryHandler(admin_button_callback, pattern="^admin_"))
-    
     application.add_handler(CommandHandler("list", list_subs))
     application.add_handler(CommandHandler("delete", delete_sub))
-    application.add_handler(CommandHandler("vip", vip))
-    application.add_handler(CommandHandler("deposit", deposit_command))
-    application.add_handler(CommandHandler("mystatus", mystatus))
     application.add_handler(CommandHandler("myid", myid))
+    application.add_handler(CommandHandler("donate", donate))
     application.add_handler(CommandHandler("language", language_command))
     application.add_handler(CommandHandler("admin", admin_panel))
-    application.add_handler(CommandHandler("setvip", setvip))
-    
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message_handler))
     
     async def help_command(update, context):
         lang = await get_lang(update)
-        await safe_reply(update, get_message("help", lang))
+        help_text = get_message("help", lang) + f"\n\n☕ 支持作者: /donate"
+        await safe_reply(update, help_text)
     
     application.add_handler(CommandHandler("help", help_command))
-    
     application.add_error_handler(error_handler)
-    
-    from telegram import BotCommand
-    
-    async def set_commands(app):
-        commands = [
-            BotCommand("start", "主菜单"),
-            BotCommand("list", "我的监控"),
-            BotCommand("vip", "VIP说明"),
-            BotCommand("mystatus", "我的状态"),
-            BotCommand("myid", "我的UID"),
-            BotCommand("language", "切换语言"),
-            BotCommand("deposit", "提交充值"),
-            BotCommand("help", "帮助"),
-        ]
-        await app.bot.set_my_commands(commands)
-    
-    application.post_init = set_commands
     
     print("🤖 CryptoSentinel Bot 已启动...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)

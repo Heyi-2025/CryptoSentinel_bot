@@ -8,12 +8,11 @@ MESSAGES = {
     "main_menu": "📈 CryptoSentinel Monitor\n\nPlease select a function:",
     "btn_add_monitor": "➕ Add Monitor",
     "btn_my_monitors": "📋 My Monitors",
-    "btn_vip_info": "💎 VIP Info",
-    "btn_my_status": "📊 My Status",
     "btn_my_uid": "🆔 My UID",
     "btn_contact": "👨‍💻 Contact Dev",
     "btn_language": "🌐 Language",
     "btn_help": "❓ Help",
+    "btn_donate": "☕ Donate",
     "contact_developer": "👨‍💻 Contact Developer\n\nTelegram: @wxyybw\n\nFeel free to reach out for questions or suggestions!",
     
     # Subscription success (with price)
@@ -22,7 +21,7 @@ MESSAGES = {
     
     # Common
     "welcome": "📈 CryptoSentinel Monitor\n\nPlease select exchange:",
-    "help": "📖 Commands:\n\n📊 Monitoring:\n/start - Add monitor\n/list - View monitors\n/delete [id] - Delete monitor\n\n💎 VIP:\n/vip - VIP info & deposit\n/mystatus - My VIP status\n/myid - View my UID\n/language - Change language\n\nOther:\n/cancel - Cancel operation",
+    "help": "📖 Commands:\n\n📊 Monitoring:\n/start - Add monitor\n/list - View monitors\n/delete [id] - Delete monitor\n\n🆔 User Info:\n/myid - View my UID\n/language - Change language\n\n☕ Support:\n/donate - Support the developer\n\nOther:\n/cancel - Cancel operation",
     "cancel": "❌ Operation cancelled",
     
     # Exchange selection
@@ -49,7 +48,7 @@ MESSAGES = {
     "save_failed": "❌ Save failed, please try again",
     
     # Subscription limit
-    "max_subs_reached": "❌ You have reached the subscription limit ({max}).\n\n💎 Upgrade to VIP for more slots!\nSend /vip for details",
+    "max_subs_reached": "❌ You have reached the subscription limit ({max}).",
     
     # Subscription list
     "no_subs": "📭 You have no monitors yet\n\nSend /start to add one",
@@ -66,57 +65,17 @@ MESSAGES = {
     # User ID
     "myid": "🆔 Your info:\n\n• UID: {uid}\n• Username: @{username}",
     
-    # VIP
-    "vip_title": "💎 VIP Membership",
-    "vip_status_vip": "✅ VIP Member\nExpires: {expire_date}",
-    "vip_status_normal": "❌ Regular User",
-    "vip_benefits": "📋 VIP Benefits:\n• Monitor slots: 5 (Regular: 1)\n• Duration: {duration} days",
-    "vip_price": "💰 Price: {price} USDT",
-    "vip_deposit_address": "📍 Deposit Address (TRC20):\n<code>{address}</code>",
-    "vip_deposit_hint": "⚠️ After transfer, click the button below to submit",
-    
-    # VIP Status
-    "mystatus_title": "📊 VIP Status",
-    "mystatus_vip": "✅ VIP Member\nExpires: {expire_date} ({days_left} days left)",
-    "mystatus_normal": "❌ Regular User\nQuota: 1 indicator",
-    "mystatus_quota": "Indicator quota: {current}/{max}",
-    "mystatus_register_date": "Registered: {date}",
-    
-    # Deposit
-    "deposit_hint": "📝 Submit Deposit Request\n\nPlease send transaction hash:\nFormat: /deposit tx_hash\n\nExample:\n/deposit abc123def456789...",
-    "deposit_missing_hash": "❌ Please provide transaction hash\n\nUsage: /deposit tx_hash\nExample: /deposit abc123def456...",
-    "deposit_hash_too_short": "❌ Invalid transaction hash format",
-    "deposit_success": "✅ Deposit request submitted!\n\nTransaction: {tx_hash}...\nRequest ID: #{payment_id}\n\nPlease wait for admin approval. VIP will be activated automatically.",
-    
-    # Open VIP
-    "open_vip_title": "💎 Get VIP",
-    "open_vip_price": "Price: {price} USDT / {duration} days",
+    # Donate
+    "donate_title": "☕ Support the Developer",
+    "donate_content": "Thank you for using CryptoSentinel!\n\nIf this project helps you, consider buying me a coffee ❤️\n\n📍 Donate Address (TRC20):\n<code>{address}</code>\n\n💰 USDT (TRC20)\n\nYour support keeps me motivated to improve!",
+    "donate_copy": "📋 Address copied to clipboard",
     
     # Admin
     "admin_no_permission": "❌ You don't have permission to access admin panel",
-    "admin_panel": "🔧 Admin Control Panel\n\n📊 Stats:\n• Total users: {total}\n• VIP users: {vip}\n• Pending deposits: {pending}\n",
-    "admin_setvip_usage": "❌ Usage: /setvip UID days\nExample: /setvip 123456 365",
-    "admin_setvip_success": "✅ VIP activated for user {uid} ({days} days)",
-    "admin_setvip_failed": "❌ Activation failed",
-    "admin_setvip_param_error": "❌ Invalid parameters",
-    
-    # Admin buttons
-    "admin_btn_payments": "💰 Deposit Requests",
-    "admin_btn_vip_list": "👥 VIP Users",
+    "admin_panel": "🔧 Admin Control Panel\n\n📊 Stats:\n• Total users: {total}\n",
     "admin_btn_broadcast": "📢 Broadcast",
     "admin_btn_stats": "📊 Statistics",
     "admin_btn_back": "⬅️ Back",
-    
-    # Payment requests
-    "admin_payments_title": "💰 Deposit Requests\n\n{count} pending:\n\n",
-    "admin_payments_empty": "💰 Deposit Requests\n\nNo pending requests",
-    "admin_payment_detail": "💰 Deposit Request Details\n\nRequest ID: #{payment_id}\nUser UID: {uid}\nTransaction: {tx_hash}\nTime: {time}\nStatus: {status}",
-    "admin_payment_approved": "✅ Request #{payment_id} approved, VIP activated",
-    "admin_payment_rejected": "❌ Request #{payment_id} rejected",
-    
-    # VIP list
-    "admin_vip_list_title": "👥 VIP Users\n\n{count} VIP members:\n\n",
-    "admin_vip_list_empty": "👥 VIP Users\n\nNo VIP users yet",
     
     # Broadcast
     "admin_broadcast_input": "📢 Broadcast Message\n\nPlease enter the message to send:",
@@ -125,7 +84,7 @@ MESSAGES = {
     "admin_broadcast_done": "✅ Broadcast complete\n\nSent: {success}/{total}",
     
     # Stats
-    "admin_stats": "📊 Statistics\n\n• Total users: {total}\n• VIP users: {vip}\n• Pending deposits: {pending}",
+    "admin_stats": "📊 Statistics\n\n• Total users: {total}",
     
     # Language
     "language_select": "🌐 选择语言 / Select language:",
@@ -134,19 +93,9 @@ MESSAGES = {
     "btn_lang_en": "🇺🇸 English",
     
     # Buttons
-    "btn_submit_deposit": "📝 Submit Deposit",
-    "btn_vip_status": "📊 My VIP Status",
-    "btn_open_vip": "💎 Get VIP",
     "btn_confirm": "✅ Confirm",
     "btn_cancel": "❌ Cancel",
-    "btn_approve": "✅ Approve",
-    "btn_reject": "❌ Reject",
     "btn_broadcast_all": "👥 All Users",
-    "btn_broadcast_vip": "💎 VIP Only",
-    
-    # VIP Expiry Reminder
-    "vip_reminder": "⏰ VIP Expiry Reminder\n\nYour VIP will expire in {days} days\n\n💎 Renewal: {price} USDT / {duration} days\n\n📍 Deposit Address (TRC20):\n<code>{address}</code>\n\nAfter transfer, send /deposit tx_hash to submit",
-    "vip_expired": "❌ VIP Expired\n\nYour VIP has expired. You are now a regular user.\nMonitor quota: 1 indicator\n\n💎 Reactivate: {price} USDT / {duration} days\n\n📍 Deposit Address (TRC20):\n<code>{address}</code>\n\nAfter transfer, send /deposit tx_hash to submit",
     
     # Errors
     "error_user_not_found": "❌ User not found, please send /start first",
